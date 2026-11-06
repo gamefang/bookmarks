@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title data-i18n="documentTitle">Bookmarks</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./js/app.js"></script>
+</head>
+<body>
+  <main class="app">
+    <header class="app-header">
+      <h1>📑 <span data-i18n="appTitle">Bookmarks</span></h1>
+    </header>
+
+    <section class="toolbar" aria-label="Main toolbar" data-i18n-aria-label="toolbarLabel">
+      <label class="visually-hidden" for="searchInput" data-i18n="searchLabel">Search bookmarks</label>
+      <input
+        id="searchInput"
+        class="search-input"
+        type="search"
+        autocomplete="off"
+        data-i18n-placeholder="searchPlaceholder"
+        placeholder="Search..."
+      >
+      <button id="pullButton" class="button button-success" type="button" data-i18n="pullButton">⬇ Pull</button>
+      <button id="pushButton" class="button" type="button" data-i18n="pushButton">⬆ Push</button>
+      <button id="addButton" class="button button-warm" type="button" data-i18n="addButton">＋ Add</button>
+      <button id="settingsButton" class="button button-secondary" type="button" data-i18n="settingsButton">⚙ Settings</button>
+    </section>
+
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+    <nav id="tagBar" class="tag-bar" aria-label="Filter bookmarks by tag" data-i18n-aria-label="tagFilterLabel"></nav>
+
+    <section id="bookmarkGrid" class="bookmark-grid" aria-label="Bookmarks" data-i18n-aria-label="bookmarkListLabel"></section>
+    <p id="emptyState" class="empty-state" hidden data-i18n="emptyBookmarks">No bookmarks yet.</p>
+    <footer id="meta" class="meta"></footer>
+  </main>
+
+  <dialog id="settingsDialog" class="dialog">
+    <form id="settingsForm" class="dialog-form">
+      <h2 data-i18n="settingsTitle">Settings</h2>
+
+      <label for="gistIdInput" data-i18n="gistIdLabel">GitHub Gist ID</label>
+      <input
+        id="gistIdInput"
+        name="gistId"
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        data-i18n-placeholder="gistIdPlaceholder"
+        placeholder="Paste your Gist ID"
+      >
+
+      <label for="tokenInput" data-i18n="tokenLabel">GitHub Token</label>
+      <input
+        id="tokenInput"
+        name="token"
+        type="password"
+        autocomplete="off"
+        spellcheck="false"
+        data-i18n-placeholder="tokenPlaceholder"
+        placeholder="Required for pushing changes"
+      >
+      <p class="field-hint" data-i18n="tokenHint">
+        Use a fine-grained token with access to Gists only. The token is stored in this browser.
+      </p>
+
+      <div class="dialog-actions">
+        <button class="button" type="submit" data-i18n="saveButton">Save</button>
+        <button class="button button-danger" id="cancelSettingsButton" type="button" data-i18n="cancelButton">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="bookmarkDialog" class="dialog">
+    <form id="bookmarkForm" class="dialog-form">
+      <h2 id="bookmarkDialogTitle">Add bookmark</h2>
+      <input id="bookmarkIndexInput" name="index" type="hidden" value="-1">
+
+      <label for="nameInput" data-i18n="nameLabel">Name</label>
+      <input
+        id="nameInput"
+        name="name"
+        type="text"
+        maxlength="200"
+        required
+        data-i18n-placeholder="namePlaceholder"
+        placeholder="Bookmark name"
+      >
+
+      <label for="urlInput" data-i18n="urlLabel">URL</label>
+      <input
+        id="urlInput"
+        name="url"
+        type="url"
+        inputmode="url"
+        maxlength="2048"
+        required
+        data-i18n-placeholder="urlPlaceholder"
+        placeholder="https://example.com"
+      >
+
+      <label for="descriptionInput" data-i18n="descriptionLabel">Description</label>
+      <textarea
+        id="descriptionInput"
+        name="description"
+        rows="3"
+        maxlength="2000"
+        data-i18n-placeholder="descriptionPlaceholder"
+        placeholder="A short description"
+      ></textarea>
+
+      <label for="tagsInput" data-i18n="tagsLabel">Tags</label>
+      <input
+        id="tagsInput"
+        name="tags"
+        type="text"
+        maxlength="500"
+        data-i18n-placeholder="tagsPlaceholder"
+        placeholder="Separate tags with |"
+      >
+
+      <div class="dialog-actions">
+        <button class="button" type="submit" data-i18n="saveButton">Save</button>
+        <button class="button button-danger" id="cancelBookmarkButton" type="button" data-i18n="cancelButton">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

@@ -1,0 +1,354 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  color-scheme: light dark;
+  --page-bg: #f5f5f5;
+  --surface: #ffffff;
+  --text: #333333;
+  --muted: #888888;
+  --border: #e0e0e0;
+  --accent: #2563eb;
+  --accent-soft: #e8f0fe;
+  --accent-text: #1a73e8;
+  --success: #16a34a;
+  --danger: #dc2626;
+  --warm: #d97706;
+  --shadow: 0 2px 12px rgb(0 0 0 / 6%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page-bg: #111111;
+    --surface: #1e1e2e;
+    --text: #dddddd;
+    --muted: #888888;
+    --border: #383838;
+    --accent: #60a5fa;
+    --accent-soft: #1e3a5f;
+    --accent-text: #93c5fd;
+    --success: #4ade80;
+    --danger: #f87171;
+    --warm: #f59e0b;
+    --shadow: 0 2px 12px rgb(0 0 0 / 20%);
+  }
+}
+
+body {
+  min-width: 320px;
+  max-width: 900px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 16px;
+  background: var(--page-bg);
+  color: var(--text);
+  font-family: system-ui, sans-serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.app-header h1 {
+  margin: 12px 0 18px;
+  font-size: 1.4rem;
+  text-align: center;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.search-input {
+  flex: 1 1 220px;
+  min-width: 150px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline-offset: 2px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.button {
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 13px;
+  transition: opacity 120ms ease;
+}
+
+.button:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.button:active:not(:disabled) {
+  opacity: 0.72;
+}
+
+.button-success {
+  background: var(--success);
+}
+
+.button-danger {
+  background: var(--danger);
+}
+
+.button-warm {
+  background: var(--warm);
+}
+
+.button-secondary {
+  background: #666666;
+}
+
+.status {
+  min-height: 24px;
+  padding: 4px 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.status.success {
+  color: var(--success);
+}
+
+.status.error {
+  color: var(--danger);
+}
+
+.tag-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.tag-filter {
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 12px;
+}
+
+.tag-filter[aria-pressed="true"] {
+  border-color: var(--accent);
+  font-weight: 700;
+}
+
+.bookmark-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+  gap: 10px;
+}
+
+.bookmark-card {
+  position: relative;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  transition: box-shadow 120ms ease;
+}
+
+.bookmark-card:hover,
+.bookmark-card:focus-within {
+  box-shadow: var(--shadow);
+}
+
+.bookmark-title {
+  margin: 0 58px 4px 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.bookmark-title a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.bookmark-title a:hover {
+  color: var(--accent);
+}
+
+.bookmark-url {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.bookmark-description {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bookmark-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.bookmark-tag {
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 10px;
+}
+
+.bookmark-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+}
+
+.icon-button {
+  padding: 3px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.icon-button:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.empty-state {
+  padding: 40px 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.meta {
+  margin-top: 20px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.dialog {
+  width: min(420px, calc(100% - 28px));
+  max-width: 420px;
+  max-height: calc(100% - 32px);
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 20px;
+}
+
+.dialog-form h2 {
+  margin-bottom: 8px;
+  font-size: 16px;
+}
+
+.dialog-form label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dialog-form input,
+.dialog-form textarea {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline-offset: 2px;
+  background: var(--page-bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.dialog-form textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.field-hint {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dialog-actions .button {
+  flex: 1;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+@media (max-width: 520px) {
+  body {
+    padding: 12px;
+  }
+
+  .toolbar .button {
+    flex: 1 1 auto;
+  }
+
+  .search-input {
+    flex-basis: 100%;
+  }
+}
