@@ -263,10 +263,13 @@ button:disabled {
 .dialog {
   width: min(420px, calc(100% - 28px));
   max-width: 420px;
-  max-height: calc(100% - 32px);
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
   margin: auto;
   padding: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scroll-behavior: smooth;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
@@ -421,15 +424,17 @@ button:disabled {
   font-size: 13px !important;
 }
 
+/* Horizontal tag options, limited to two rows by JavaScript. */
 .tag-options {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 4px);
-  right: 0;
-  left: 0;
-  max-height: 190px;
-  overflow-y: auto;
-  padding: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: flex-start;
+  gap: 5px 6px;
+  max-height: 74px;
+  margin-top: 5px;
+  padding: 6px;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
@@ -441,24 +446,28 @@ button:disabled {
 }
 
 .tag-option {
-  display: block;
-  width: 100%;
-  padding: 8px 10px;
+  flex: 0 0 auto;
+  max-width: 100%;
+  padding: 5px 9px;
   border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text);
-  font-size: 13px;
-  text-align: left;
-  overflow-wrap: anywhere;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tag-option:hover,
 .tag-option[aria-selected="true"] {
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  background: var(--accent);
+  color: #ffffff;
 }
 
 .tag-option-create {
+  border: 1px dashed var(--accent);
+  background: transparent;
   font-weight: 600;
 }

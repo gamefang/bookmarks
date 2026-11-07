@@ -1,5 +1,7 @@
 // Generic Github Gist Services
-const GITHUB_API = 'https://api.github.com';
+import { config } from './config.js';
+
+const GITHUB_API = config.gist.apiBase;
 
 class GistServiceError extends Error {
   constructor(key, params = {}) {
@@ -15,7 +17,9 @@ async function request(url, options = {}) {
   try {
     response = await fetch(url, options);
   } catch (error) {
-    throw new GistServiceError('errorNetwork', { details: error?.message || '' });
+    throw new GistServiceError('errorNetwork', {
+      details: error?.message || ''
+    });
   }
 
   const data = await response.json().catch(() => null);
@@ -37,9 +41,11 @@ export const GistService = Object.freeze({
     });
 
     const file = gist?.files?.[filename];
+
     if (!file) {
       throw new GistServiceError('errorGistFileMissing', { filename });
     }
+
     if (file.truncated) {
       throw new GistServiceError('errorGistFileTooLarge');
     }

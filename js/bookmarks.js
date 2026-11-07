@@ -1,4 +1,8 @@
-const CSV_COLUMNS = ['name', 'url', 'desc', 'tags'];
+// Bookmarks core logic
+import { config } from './config.js';
+
+const CSV_COLUMNS = config.csv.columns;
+const TAG_SEPARATOR = config.csv.tagSeparator;
 
 export class BookmarkDataError extends Error {
   constructor(key, params = {}, options = {}) {
@@ -69,7 +73,7 @@ export function normalizeBookmark(data = {}) {
     desc: String(data.desc ?? data.description ?? '').trim(),
     tags: Array.isArray(data.tags)
       ? [...new Set(data.tags.map((tag) => String(tag).trim()).filter(Boolean))]
-      : String(data.tags ?? '').split('|').map((tag) => tag.trim()).filter(Boolean)
+      : String(data.tags ?? '').split(TAG_SEPARATOR).map((tag) => tag.trim()).filter(Boolean)
   };
 }
 
@@ -81,6 +85,7 @@ export function createBookmark(data) {
   }
 
   let parsedUrl;
+
   try {
     parsedUrl = new URL(bookmark.url);
   } catch {
@@ -112,7 +117,9 @@ export function parseBookmarksCSV(input) {
   if (!rows.length) return [];
 
   const headers = rows.shift().map((header) => header.trim().toLowerCase());
-  const columnIndex = Object.fromEntries(CSV_COLUMNS.map((column) => [column, headers.indexOf(column)]));
+  const columnIndex = Object.fromEntries(
+    CSV_COLUMNS.map((column) => [column, headers.indexOf(column)])
+  );
 
   if (columnIndex.name < 0 || columnIndex.url < 0 || columnIndex.tags < 0) {
     throw new BookmarkDataError('errorCsvHeader');
@@ -127,12 +134,15 @@ export function parseBookmarksCSV(input) {
 
     const getValue = (column) => {
       const position = columnIndex[column];
+
       if (hasLegacyDescription && column === 'desc') {
         return row.slice(position, -1).join(',');
       }
+
       if (hasLegacyDescription && column === 'tags') {
         return row.at(-1) ?? '';
       }
+
       return position >= 0 ? row[position] ?? '' : '';
     };
 
@@ -144,18 +154,28 @@ export function parseBookmarksCSV(input) {
         tags: getValue('tags')
       });
     } catch (error) {
-      throw new BookmarkDataError('errorCsvRow', { row: index + 2 }, { cause: error });
+      throw new BookmarkDataError('errorCsvRow', {
+        row: index + 2
+      }, {
+        cause: error
+      });
     }
   });
 }
 
 export function serializeBookmarksCSV(bookmarks) {
-  const rows = bookmarks.map((bookmark) => [
-    bookmark.name,
-    bookmark.url,
-    bookmark.desc,
-    bookmark.tags.join('|')
-  ].map(escapeCSV).join(','));
+  const rows = bookmarks.map((bookmark) => {
+    const values = {
+      name: bookmark.name,
+      url: bookmark.url,
+      desc: bookmark.desc,
+      tags: bookmark.tags.join(TAG_SEPARATOR)
+    };
+
+    return CSV_COLUMNS
+      .map((column) => escapeCSV(values[column] ?? ''))
+      .join(',');
+  });
 
   return `${CSV_COLUMNS.join(',')}\n${rows.join('\n')}\n`;
 }
