@@ -2,6 +2,7 @@
 export const StorageKeys = Object.freeze({
   BOOKMARKS: 'bm_items',
   DIRTY: 'bm_dirty',
+  SYNCED_FINGERPRINT: 'bm_synced_fingerprint',
   GIST_ID: 'bm_gist',
   GITHUB_TOKEN: 'bm_token',
   LOCALE: 'bm_locale'

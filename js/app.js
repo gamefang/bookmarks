@@ -10,6 +10,8 @@ import {
 } from './bookmarks.js';
 
 const GIST_FILENAME = 'bookmarks.csv';
+const METADATA_TIMEOUT = 3500;
+const METADATA_MAX_BYTES = 64 * 1024;
 
 const elements = {
   search: document.querySelector('#searchInput'),
@@ -34,15 +36,23 @@ const elements = {
   name: document.querySelector('#nameInput'),
   url: document.querySelector('#urlInput'),
   description: document.querySelector('#descriptionInput'),
+  tagPicker: document.querySelector('#tagPicker'),
+  selectedTags: document.querySelector('#selectedTags'),
   tags: document.querySelector('#tagsInput'),
+  tagOptions: document.querySelector('#tagOptions'),
   cancelBookmarkButton: document.querySelector('#cancelBookmarkButton')
 };
 
 let bookmarks = [];
+let selectedTags = [];
 let isDirty = false;
 let isBusy = false;
 let activeTag = null;
 let revision = 0;
+let baselineFingerprint = null;
+let tagOptionsOpen = false;
+let activeTagOption = -1;
+let bookmarkDialogSession = 0;
 
 function readConfig() {
   return {
@@ -51,9 +61,32 @@ function readConfig() {
   };
 }
 
+// A compact two-part fingerprint avoids storing a second full copy of the bookmark data.
+// It is calculated only when data changes or synchronization completes, never during rendering.
+function fingerprintText(text) {
+  let hashA = 0x811c9dc5;
+  let hashB = 0x9e3779b9;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    hashA = Math.imul(hashA ^ code, 0x01000193);
+    hashB = Math.imul(hashB ^ code, 0x5bd1e995);
+  }
+
+  return `${text.length}:${hashA >>> 0}:${hashB >>> 0}`;
+}
+
+function getBookmarksFingerprint() {
+  return fingerprintText(serializeBookmarksCSV(bookmarks));
+}
+
 function persistState() {
-  return LocalStore.set(StorageKeys.BOOKMARKS, bookmarks)
-    && LocalStore.set(StorageKeys.DIRTY, isDirty);
+  const savedBookmarks = LocalStore.set(StorageKeys.BOOKMARKS, bookmarks);
+  const savedDirty = LocalStore.set(StorageKeys.DIRTY, isDirty);
+  const savedBaseline = baselineFingerprint === null
+    || LocalStore.set(StorageKeys.SYNCED_FINGERPRINT, baselineFingerprint);
+
+  return savedBookmarks && savedDirty && savedBaseline;
 }
 
 function setStatus(message, type = '') {
@@ -68,16 +101,22 @@ function setBusy(value) {
 }
 
 function markChanged(message = t('statusSavedLocal')) {
-  isDirty = true;
   revision += 1;
+  isDirty = baselineFingerprint === null
+    || getBookmarksFingerprint() !== baselineFingerprint;
 
   if (!persistState()) {
     setStatus(t('statusLocalStorageError'), 'error');
   } else {
-    setStatus(message);
+    setStatus(isDirty ? message : t('statusChangesReverted'), isDirty ? '' : 'success');
   }
 
   render();
+}
+
+function getAllTags() {
+  return [...new Set(bookmarks.flatMap((bookmark) => bookmark.tags))]
+    .sort((a, b) => a.localeCompare(b, getLocale()));
 }
 
 function createTagButton(tag) {
@@ -159,10 +198,127 @@ function createBookmarkCard(bookmark, index) {
   return card;
 }
 
+function renderTagPicker() {
+  elements.selectedTags.replaceChildren();
+
+  selectedTags.forEach((tag, index) => {
+    const chip = document.createElement('span');
+    chip.className = 'tag-chip';
+
+    const label = document.createElement('span');
+    label.textContent = tag;
+    chip.append(label);
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'tag-chip-remove';
+    remove.textContent = '×';
+    remove.title = t('removeTagAction', { tag });
+    remove.setAttribute('aria-label', remove.title);
+    remove.dataset.removeTagIndex = String(index);
+    chip.append(remove);
+
+    elements.selectedTags.append(chip);
+  });
+
+  const query = elements.tags.value.trim();
+  const normalizedQuery = query.toLocaleLowerCase(getLocale());
+  const selectedSet = new Set(selectedTags);
+  const allTags = getAllTags();
+  const exactMatch = allTags.includes(query);
+  const options = [];
+
+  if (query && !query.includes('|') && !exactMatch && !selectedSet.has(normalizedQuery)) {
+    options.push({ tag: query, isNew: true });
+  }
+
+  allTags.forEach((tag) => {
+    const normalizedTag = tag.toLocaleLowerCase(getLocale());
+    if (selectedSet.has(tag)) return;
+    if (normalizedQuery && !normalizedTag.includes(normalizedQuery)) return;
+    options.push({ tag, isNew: false });
+  });
+
+  elements.tagOptions.replaceChildren();
+  options.forEach(({ tag, isNew }, index) => {
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.className = `tag-option${isNew ? ' tag-option-create' : ''}`;
+    option.id = `tag-option-${index}`;
+    option.setAttribute('role', 'option');
+    option.setAttribute('aria-selected', String(index === activeTagOption));
+    option.dataset.tagOption = tag;
+    option.textContent = isNew ? t('tagsCreateOption', { tag }) : tag;
+    elements.tagOptions.append(option);
+  });
+
+  if (activeTagOption >= options.length) activeTagOption = options.length - 1;
+  if (activeTagOption < 0) elements.tags.removeAttribute('aria-activedescendant');
+  else elements.tags.setAttribute('aria-activedescendant', `tag-option-${activeTagOption}`);
+
+  elements.tagOptions.hidden = !tagOptionsOpen || options.length === 0;
+  elements.tags.setAttribute('aria-expanded', String(!elements.tagOptions.hidden));
+}
+
+function setTagOptionsOpen(value) {
+  tagOptionsOpen = value;
+  if (!value) activeTagOption = -1;
+  renderTagPicker();
+}
+
+function updateActiveTagOption(direction) {
+  if (!tagOptionsOpen) setTagOptionsOpen(true);
+  const options = [...elements.tagOptions.querySelectorAll('.tag-option')];
+  if (!options.length) return;
+
+  activeTagOption = activeTagOption < 0
+    ? (direction > 0 ? 0 : options.length - 1)
+    : Math.max(0, Math.min(options.length - 1, activeTagOption + direction));
+
+  options.forEach((option, index) => {
+    option.setAttribute('aria-selected', String(index === activeTagOption));
+  });
+  elements.tags.setAttribute('aria-activedescendant', `tag-option-${activeTagOption}`);
+}
+
+function addSelectedTag(value) {
+  const tag = String(value ?? '').trim();
+  if (!tag) return;
+
+  if (tag.includes('|')) {
+    setStatus(t('errorTagSeparator'), 'error');
+    return;
+  }
+
+  const existing = getAllTags().find((item) => item === tag);
+  const selected = selectedTags.includes(tag);
+
+  if (!selected) selectedTags.push(existing ?? tag);
+  elements.tags.value = '';
+  activeTagOption = -1;
+  tagOptionsOpen = true;
+  renderTagPicker();
+  elements.tags.focus();
+}
+
+function commitTagInput() {
+  const value = elements.tags.value.trim();
+  if (!value) return;
+
+  const existing = getAllTags().find((tag) => tag === value);
+  addSelectedTag(existing ?? value);
+}
+
+function removeSelectedTag(index) {
+  if (!Number.isInteger(index) || index < 0 || index >= selectedTags.length) return;
+  selectedTags.splice(index, 1);
+  renderTagPicker();
+  elements.tags.focus();
+}
+
 function render() {
   const query = elements.search.value.trim().toLocaleLowerCase(getLocale());
-  const allTags = [...new Set(bookmarks.flatMap((bookmark) => bookmark.tags))]
-    .sort((a, b) => a.localeCompare(b, getLocale()));
+  const allTags = getAllTags();
 
   if (activeTag && !allTags.includes(activeTag)) activeTag = null;
 
@@ -208,9 +364,20 @@ function openBookmarkDialog(index = -1) {
   elements.name.value = bookmark?.name ?? '';
   elements.url.value = bookmark?.url ?? '';
   elements.description.value = bookmark?.desc ?? '';
-  elements.tags.value = bookmark?.tags.join('|') ?? '';
+  selectedTags = bookmark ? [...bookmark.tags] : [];
+  elements.tags.value = '';
+  setTagOptionsOpen(false);
   elements.bookmarkDialog.showModal();
   elements.name.focus();
+
+  const session = ++bookmarkDialogSession;
+  if (index < 0) prefillBookmarkFromClipboard(session);
+}
+
+function closeBookmarkDialog() {
+  bookmarkDialogSession += 1;
+  setTagOptionsOpen(false);
+  elements.bookmarkDialog.close();
 }
 
 function saveBookmark(event) {
@@ -224,7 +391,7 @@ function saveBookmark(event) {
       name: elements.name.value,
       url: elements.url.value,
       desc: elements.description.value,
-      tags: elements.tags.value.split('|')
+      tags: selectedTags
     });
   } catch (error) {
     setStatus(localizeError(error), 'error');
@@ -237,7 +404,7 @@ function saveBookmark(event) {
     bookmarks.unshift(bookmark);
   }
 
-  elements.bookmarkDialog.close();
+  closeBookmarkDialog();
   markChanged();
 }
 
@@ -289,6 +456,126 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? t('dateUnknown') : date.toLocaleString(getLocale());
 }
 
+function normalizeClipboardUrl(value) {
+  const text = String(value ?? '').trim();
+  if (!text || /\s/.test(text)) return null;
+
+  try {
+    const candidate = /^https?:\/\//i.test(text) ? text : `https://${text}`;
+    const url = new URL(candidate);
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+    if (!url.hostname.includes('.') && url.hostname !== 'localhost') return null;
+    if (url.href.length > Number(elements.url.maxLength)) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+async function readHtmlHead(response) {
+  if (!response.body?.getReader) {
+    return (await response.text()).slice(0, METADATA_MAX_BYTES);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let html = '';
+  let bytesRead = 0;
+
+  try {
+    while (bytesRead < METADATA_MAX_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) {
+        html += decoder.decode();
+        break;
+      }
+
+      const chunk = value.subarray(0, METADATA_MAX_BYTES - bytesRead);
+      bytesRead += chunk.byteLength;
+      html += decoder.decode(chunk, { stream: true });
+
+      if (/<\/head\s*>/i.test(html) || chunk.byteLength < value.byteLength) break;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+
+  return html;
+}
+
+async function fetchPageMetadata(url) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), METADATA_TIMEOUT);
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      mode: 'cors',
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+      signal: controller.signal
+    });
+
+    if (!response.ok) return null;
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType && !contentType.toLowerCase().includes('text/html')) return null;
+
+    const html = await readHtmlHead(response);
+    const page = new DOMParser().parseFromString(html, 'text/html');
+    const readMeta = (selector) => page.querySelector(selector)?.getAttribute('content')?.trim() ?? '';
+    const title = readMeta('meta[property="og:title"]')
+      || readMeta('meta[name="twitter:title"]')
+      || page.querySelector('title')?.textContent?.trim()
+      || '';
+    const cleanText = (value) => value.replace(/\s+/g, ' ').trim();
+    const description = readMeta('meta[property="og:description"]')
+      || readMeta('meta[name="description"]')
+      || readMeta('meta[name="twitter:description"]');
+
+    return { title: cleanText(title), description: cleanText(description) };
+  } catch {
+    // Most sites do not allow cross-origin HTML reads. Clipboard URL filling still works.
+    return null;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function prefillBookmarkFromClipboard(session) {
+  if (!navigator.clipboard?.readText) return;
+
+  let clipboardText;
+  try {
+    clipboardText = await navigator.clipboard.readText();
+  } catch {
+    return;
+  }
+
+  const url = normalizeClipboardUrl(clipboardText);
+  if (!url || session !== bookmarkDialogSession || !elements.bookmarkDialog.open) return;
+  if (elements.url.value.trim()) return;
+
+  elements.url.value = url;
+  const canFillName = !elements.name.value.trim();
+  const canFillDescription = !elements.description.value.trim();
+  setStatus(t('statusClipboardUrl'));
+
+  const metadata = await fetchPageMetadata(url);
+  if (!metadata || session !== bookmarkDialogSession || !elements.bookmarkDialog.open) return;
+
+  let filled = false;
+  if (canFillName && !elements.name.value.trim() && metadata.title) {
+    elements.name.value = metadata.title.slice(0, Number(elements.name.maxLength));
+    filled = true;
+  }
+  if (canFillDescription && !elements.description.value.trim() && metadata.description) {
+    elements.description.value = metadata.description.slice(0, Number(elements.description.maxLength));
+    filled = true;
+  }
+
+  if (filled) setStatus(t('statusMetadataLoaded'), 'success');
+}
+
 async function pullBookmarks() {
   if (isBusy) return;
 
@@ -313,6 +600,7 @@ async function pullBookmarks() {
     }
 
     bookmarks = incoming;
+    baselineFingerprint = fingerprintText(serializeBookmarksCSV(incoming));
     isDirty = false;
     revision += 1;
     activeTag = null;
@@ -343,25 +631,24 @@ async function pushBookmarks() {
     return;
   }
 
-  const startRevision = revision;
   const content = serializeBookmarksCSV(bookmarks);
+  const pushedFingerprint = fingerprintText(content);
   setBusy(true);
   setStatus(t('statusPushing'));
 
   try {
     await GistService.writeFile(gistId, token, GIST_FILENAME, content);
 
-    if (revision === startRevision) {
-      isDirty = false;
-      if (!persistState()) {
-        setStatus(t('statusLocalStorageError'), 'error');
-      } else {
-        setStatus(t('statusPushSuccess'), 'success');
-      }
-    } else {
-      isDirty = true;
-      persistState();
+    // The uploaded content becomes the new baseline, even if local edits happened during the request.
+    baselineFingerprint = pushedFingerprint;
+    isDirty = getBookmarksFingerprint() !== baselineFingerprint;
+
+    if (!persistState()) {
+      setStatus(t('statusLocalStorageError'), 'error');
+    } else if (isDirty) {
       setStatus(t('statusPushOutdated'));
+    } else {
+      setStatus(t('statusPushSuccess'), 'success');
     }
 
     render();
@@ -378,6 +665,19 @@ function loadBookmarks() {
     ? saved.map((item) => normalizeBookmark(item ?? {})).filter((bookmark) => bookmark.name && bookmark.url)
     : [];
   isDirty = Boolean(LocalStore.get(StorageKeys.DIRTY, false));
+
+  const savedFingerprint = LocalStore.getString(StorageKeys.SYNCED_FINGERPRINT, null);
+  if (savedFingerprint !== null) {
+    baselineFingerprint = savedFingerprint;
+    isDirty = getBookmarksFingerprint() !== baselineFingerprint;
+    LocalStore.set(StorageKeys.DIRTY, isDirty);
+  } else if (!isDirty) {
+    // On first run after this update, the current clean local data is the comparison baseline.
+    baselineFingerprint = getBookmarksFingerprint();
+    LocalStore.set(StorageKeys.SYNCED_FINGERPRINT, baselineFingerprint);
+  }
+  // Legacy installations already marked dirty have no known baseline; keep that warning
+  // until the user performs a successful pull or push rather than guessing that data is clean.
 }
 
 function bindEvents() {
@@ -390,7 +690,57 @@ function bindEvents() {
   elements.settingsForm.addEventListener('submit', saveSettings);
   elements.bookmarkForm.addEventListener('submit', saveBookmark);
   elements.cancelSettingsButton.addEventListener('click', () => elements.settingsDialog.close());
-  elements.cancelBookmarkButton.addEventListener('click', () => elements.bookmarkDialog.close());
+  elements.cancelBookmarkButton.addEventListener('click', closeBookmarkDialog);
+  elements.bookmarkDialog.addEventListener('close', () => {
+    bookmarkDialogSession += 1;
+    setTagOptionsOpen(false);
+  });
+
+  elements.tags.addEventListener('focus', () => setTagOptionsOpen(true));
+  elements.tags.addEventListener('input', () => {
+    activeTagOption = -1;
+    tagOptionsOpen = true;
+    renderTagPicker();
+  });
+  elements.tags.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      updateActiveTagOption(event.key === 'ArrowDown' ? 1 : -1);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      if (activeTagOption >= 0) {
+        elements.tagOptions.querySelectorAll('.tag-option')[activeTagOption]?.click();
+      } else {
+        commitTagInput();
+      }
+    } else if (event.key === 'Backspace' && !elements.tags.value && selectedTags.length) {
+      selectedTags.pop();
+      renderTagPicker();
+    } else if (event.key === 'Escape' && !elements.tagOptions.hidden) {
+      event.preventDefault();
+      event.stopPropagation();
+      setTagOptionsOpen(false);
+    } else if (event.key === 'Tab') {
+      setTagOptionsOpen(false);
+    }
+  });
+
+  elements.tagPicker.addEventListener('click', (event) => {
+    const removeButton = event.target.closest('button[data-remove-tag-index]');
+    if (removeButton) {
+      removeSelectedTag(Number.parseInt(removeButton.dataset.removeTagIndex, 10));
+      return;
+    }
+
+    const option = event.target.closest('button[data-tag-option]');
+    if (option) addSelectedTag(option.dataset.tagOption);
+  });
+  elements.tagOptions.addEventListener('mousedown', (event) => {
+    if (event.target.closest('button[data-tag-option]')) event.preventDefault();
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (tagOptionsOpen && !elements.tagPicker.contains(event.target)) setTagOptionsOpen(false);
+  });
 
   elements.tagBar.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-tag]');

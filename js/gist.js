@@ -1,3 +1,4 @@
+// Generic Github Gist Services
 const GITHUB_API = 'https://api.github.com';
 
 class GistServiceError extends Error {

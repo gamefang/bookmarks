@@ -17,3 +17,11 @@ Then visit `http://localhost:8000`.
 ## GitHub token
 
 A token is only required for pushing changes. Use a fine-grained GitHub token with Gist access only. The token is stored in the browser's local storage, so do not use this app with a personal token on a shared or untrusted device.
+
+## Sample of `bookmarks.csv`
+
+```csv
+name,url,desc,tags
+Google,https://www.google.com/,Search engine,TOOL
+GitHub,https://github.com,Code hosting platform,DEV|TOOL
+```

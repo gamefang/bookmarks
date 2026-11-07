@@ -113,14 +113,26 @@
       ></textarea>
 
       <label for="tagsInput" data-i18n="tagsLabel">Tags</label>
-      <input
-        id="tagsInput"
-        name="tags"
-        type="text"
-        maxlength="500"
-        data-i18n-placeholder="tagsPlaceholder"
-        placeholder="Separate tags with |"
-      >
+      <div id="tagPicker" class="tag-picker">
+        <div class="tag-picker-control">
+          <div id="selectedTags" class="selected-tags" aria-label="Selected tags" data-i18n-aria-label="selectedTagsLabel"></div>
+          <input
+            id="tagsInput"
+            class="tag-input"
+            name="tags"
+            type="text"
+            maxlength="200"
+            autocomplete="off"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded="false"
+            aria-controls="tagOptions"
+            data-i18n-placeholder="tagsPlaceholder"
+            placeholder="Type or select tags..."
+          >
+        </div>
+        <div id="tagOptions" class="tag-options" role="listbox" hidden></div>
+      </div>
 
       <div class="dialog-actions">
         <button class="button" type="submit" data-i18n="saveButton">Save</button>
