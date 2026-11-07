@@ -37,7 +37,10 @@ const elements = {
   selectedTags: document.querySelector('#selectedTags'),
   tags: document.querySelector('#tagsInput'),
   tagOptions: document.querySelector('#tagOptions'),
-  cancelBookmarkButton: document.querySelector('#cancelBookmarkButton')
+  cancelBookmarkButton: document.querySelector('#cancelBookmarkButton'),
+  appTitle: document.querySelector('#appTitle'),
+  managerTitle: document.querySelector('#managerTitleInput'),
+  gistFilename: document.querySelector('#gistFilenameInput'),
 };
 
 let bookmarks = [];
@@ -54,9 +57,26 @@ let tagUsage = Object.create(null);
 
 function readConfig() {
   return {
+    managerTitle: LocalStore.getString(
+      StorageKeys.APP_TITLE,
+      config.app.defaultTitle
+    ).trim() || config.app.defaultTitle,
+
+    gistFilename: LocalStore.getString(
+      StorageKeys.GIST_FILENAME,
+      config.app.gistFilename
+    ).trim() || config.app.gistFilename,
+
     gistId: LocalStore.getString(StorageKeys.GIST_ID).trim(),
     token: LocalStore.getString(StorageKeys.GITHUB_TOKEN).trim()
   };
+}
+
+function applyManagerTitle() {
+  const { managerTitle } = readConfig();
+
+  elements.appTitle.textContent = managerTitle;
+  document.title = managerTitle;
 }
 
 // A compact two-part fingerprint avoids storing a second full copy of the bookmark data.
@@ -511,22 +531,67 @@ function deleteBookmark(index) {
 
 function openSettings() {
   const settings = readConfig();
+
+  elements.managerTitle.value = settings.managerTitle;
+  elements.gistFilename.value = settings.gistFilename;
   elements.gistId.value = settings.gistId;
   elements.token.value = settings.token;
+
   elements.settingsDialog.showModal();
 }
 
 function saveSettings(event) {
   event.preventDefault();
 
-  const gistIdSaved = LocalStore.set(StorageKeys.GIST_ID, elements.gistId.value.trim());
-  const tokenSaved = LocalStore.set(StorageKeys.GITHUB_TOKEN, elements.token.value.trim());
+  const managerTitle = elements.managerTitle.value.trim();
+  const gistFilename = elements.gistFilename.value.trim();
+  const gistId = elements.gistId.value.trim();
+  const token = elements.token.value.trim();
 
-  if (!gistIdSaved || !tokenSaved) {
+  if (!managerTitle) {
+    setStatus(t('errorManagerTitleRequired'), 'error');
+    elements.managerTitle.focus();
+    return;
+  }
+
+  const invalidFilename = !gistFilename
+    || gistFilename.length <= 4
+    || !gistFilename.toLowerCase().endsWith('.csv')
+    || gistFilename.includes('/')
+    || gistFilename.includes('\\')
+    || gistFilename.includes('\n')
+    || gistFilename.includes('\r');
+
+  if (invalidFilename) {
+    setStatus(t('errorGistFilenameRequired'), 'error');
+    elements.gistFilename.focus();
+    return;
+  }
+
+  const previousSettings = readConfig();
+
+  // Warn before changing the remote target when local changes are pending.
+  if (
+    isDirty
+    && gistFilename !== previousSettings.gistFilename
+    && !window.confirm(t('confirmFilenameChangeWithDirty'))
+  ) {
+    return;
+  }
+
+  const saved = [
+    LocalStore.set(StorageKeys.APP_TITLE, managerTitle),
+    LocalStore.set(StorageKeys.GIST_FILENAME, gistFilename),
+    LocalStore.set(StorageKeys.GIST_ID, gistId),
+    LocalStore.set(StorageKeys.GITHUB_TOKEN, token)
+  ].every(Boolean);
+
+  if (!saved) {
     setStatus(t('statusLocalStorageError'), 'error');
     return;
   }
 
+  applyManagerTitle();
   elements.settingsDialog.close();
   setStatus(t('statusSettingsSaved'));
 }
@@ -689,7 +754,7 @@ async function prefillBookmarkFromClipboard(session) {
 async function pullBookmarks() {
   if (isBusy) return;
 
-  const { gistId } = readConfig();
+  const { gistId, gistFilename } = readConfig();
 
   if (!gistId) {
     setStatus(t('errorGistIdRequired'), 'error');
@@ -703,7 +768,7 @@ async function pullBookmarks() {
   setStatus(t('statusPulling'));
 
   try {
-    const remote = await GistService.readFile(gistId, config.app.gistFilename);
+    const remote = await GistService.readFile(gistId, gistFilename);
     const incoming = parseBookmarksCSV(remote.content);
 
     if (revision !== startRevision) {
@@ -736,7 +801,7 @@ async function pullBookmarks() {
 async function pushBookmarks() {
   if (isBusy) return;
 
-  const { gistId, token } = readConfig();
+  const { gistId, token, gistFilename } = readConfig();
 
   if (!gistId || !token) {
     setStatus(t('errorCredentialsRequired'), 'error');
@@ -750,7 +815,7 @@ async function pushBookmarks() {
   setStatus(t('statusPushing'));
 
   try {
-    await GistService.writeFile(gistId, token, config.app.gistFilename, content);
+    await GistService.writeFile(gistId, token, gistFilename, content);
 
     // The uploaded content becomes the new baseline, even if local edits happened during the request.
     baselineFingerprint = pushedFingerprint;
@@ -890,6 +955,9 @@ function bindEvents() {
 
 function init() {
   setLocale(LocalStore.getString(StorageKeys.LOCALE, config.i18n.defaultLocale));
+
+  applyManagerTitle();
+
   loadBookmarks();
   loadTagUsage();
   bindEvents();

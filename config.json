@@ -1,5 +1,6 @@
 {
   "app": {
+    "defaultTitle": "Bookmarks",
     "gistFilename": "bookmarks.csv"
   },
   "metadata": {
@@ -91,12 +92,22 @@
         "metaSummary": "{count} bookmarks · {state}",
         "syncStateClean": "All changes saved locally",
         "syncStateDirty": "Unsynced changes",
-        "dateUnknown": "unknown"
+        "dateUnknown": "unknown",
+        "managerTitleLabel": "Manager Title",
+        "managerTitlePlaceholder": "Bookmarks",
+        "gistFilenameLabel": "Gist Filename",
+        "gistFilenamePlaceholder": "bookmarks.csv",
+        "gistFilenameHint": "Use a .csv filename. The file must follow the same bookmark CSV format.",
+        "errorManagerTitleRequired": "A manager title is required.",
+        "errorGistFilenameRequired": "Enter a valid .csv filename without folder paths.",
+        "confirmFilenameChangeWithDirty": "You have unsynced local changes. Changing the Gist filename will redirect the next synchronization to another remote file. Continue?"
       }
     }
   },
   "storage": {
     "keys": {
+      "APP_TITLE": "bm_title",
+      "GIST_FILENAME": "bm_gist_filename",
       "BOOKMARKS": "bm_items",
       "DIRTY": "bm_dirty",
       "SYNCED_FINGERPRINT": "bm_synced_fingerprint",

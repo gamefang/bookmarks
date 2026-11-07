@@ -471,3 +471,17 @@ button:disabled {
   background: transparent;
   font-weight: 600;
 }
+
+.app-header h1 {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-icon {
+  display: block;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+}
