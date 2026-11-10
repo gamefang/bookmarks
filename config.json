@@ -17,6 +17,12 @@
   "tagPicker": {
     "maxVisibleRows": 2
   },
+  "tagColors": {
+    "normal": "#e8f0fe",
+    "normalText": "#1a73e8",
+    "untagged": "#fff1dc",
+    "untaggedText": "#9a5800"
+  },
   "i18n": {
     "defaultLocale": "en",
     "messages": {
@@ -100,7 +106,11 @@
         "gistFilenameHint": "Use a .csv filename. The file must follow the same bookmark CSV format.",
         "errorManagerTitleRequired": "A manager title is required.",
         "errorGistFilenameRequired": "Enter a valid .csv filename without folder paths.",
-        "confirmFilenameChangeWithDirty": "You have unsynced local changes. Changing the Gist filename will redirect the next synchronization to another remote file. Continue?"
+        "confirmFilenameChangeWithDirty": "You have unsynced local changes. Changing the Gist filename will redirect the next synchronization to another remote file. Continue?",
+        "untaggedFilter": "No tags",
+        "confirmDuplicateUrl": "This URL already exists as “{name}”. Open that bookmark for editing?",
+        "errorCsvComma": "Commas (,) are not allowed in the name, URL, or description.",
+        "errorTagCharacters": "Tags cannot contain commas (,) or vertical bars (|)."
       }
     }
   },

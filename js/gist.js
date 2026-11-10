@@ -33,11 +33,17 @@ async function request(url, options = {}) {
 
 // Gist access is content-agnostic so other features can reuse this service.
 export const GistService = Object.freeze({
-  async readFile(gistId, filename) {
+  async readFile(gistId, filename, token = '') {
+    const headers = {
+      Accept: 'application/vnd.github+json'
+    };
+
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
     const gist = await request(`${GITHUB_API}/gists/${encodeURIComponent(gistId)}`, {
-      headers: {
-        Accept: 'application/vnd.github+json'
-      }
+      headers
     });
 
     const file = gist?.files?.[filename];

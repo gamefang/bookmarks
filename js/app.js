@@ -38,6 +38,7 @@ const elements = {
   tags: document.querySelector('#tagsInput'),
   tagOptions: document.querySelector('#tagOptions'),
   cancelBookmarkButton: document.querySelector('#cancelBookmarkButton'),
+  bookmarkActions: document.querySelector('#bookmarkForm .dialog-actions'),
   appTitle: document.querySelector('#appTitle'),
   managerTitle: document.querySelector('#managerTitleInput'),
   gistFilename: document.querySelector('#gistFilenameInput'),
@@ -48,6 +49,7 @@ let selectedTags = [];
 let isDirty = false;
 let isBusy = false;
 let activeTag = null;
+let showUntaggedOnly = false;
 let revision = 0;
 let baselineFingerprint = null;
 let tagOptionsOpen = false;
@@ -165,12 +167,24 @@ function getAllTags() {
 }
 
 function createTagButton(tag) {
+  const isUntagged = tag === null;
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'tag-filter';
-  button.textContent = tag;
-  button.dataset.tag = tag;
-  button.setAttribute('aria-pressed', String(activeTag === tag));
+  button.className = `tag-filter${isUntagged ? ' tag-filter-untagged' : ''}`;
+  button.textContent = isUntagged ? t('untaggedFilter') : tag;
+  button.dataset.filterType = isUntagged ? 'untagged' : 'tag';
+
+  if (!isUntagged) button.dataset.tag = tag;
+
+  button.style.backgroundColor = isUntagged
+    ? config.tagColors.untagged
+    : config.tagColors.normal;
+  button.style.color = isUntagged
+    ? config.tagColors.untaggedText
+    : config.tagColors.normalText;
+  button.setAttribute('aria-pressed', String(
+    isUntagged ? showUntaggedOnly : !showUntaggedOnly && activeTag === tag
+  ));
   return button;
 }
 
@@ -286,7 +300,8 @@ function renderTagPicker() {
 
   if (
     query
-    && !query.includes(config.csv.tagSeparator)
+    && !query.includes(',')
+    && !query.includes('|')
     && !exactMatch
     && !selectedSet.has(normalizedQuery)
   ) {
@@ -381,10 +396,8 @@ function addSelectedTag(value) {
   const tag = String(value ?? '').trim();
   if (!tag) return;
 
-  if (tag.includes(config.csv.tagSeparator)) {
-    setStatus(t('errorTagSeparator', {
-      separator: config.csv.tagSeparator
-    }), 'error');
+  if (tag.includes(',') || tag.includes('|')) {
+    setStatus(t('errorTagCharacters'), 'error');
     return;
   }
 
@@ -423,13 +436,21 @@ function render() {
 
   if (activeTag && !allTags.includes(activeTag)) activeTag = null;
 
-  elements.tagBar.replaceChildren(...allTags.map(createTagButton));
+  const hasUntaggedBookmarks = bookmarks.some((bookmark) => bookmark.tags.length === 0);
+
+  if (!hasUntaggedBookmarks) showUntaggedOnly = false;
+
+  elements.tagBar.replaceChildren(
+    ...(hasUntaggedBookmarks ? [createTagButton(null)] : []),
+    ...allTags.map(createTagButton)
+  );
   elements.grid.replaceChildren();
 
   const visibleBookmarks = bookmarks
     .map((bookmark, index) => ({ bookmark, index }))
     .filter(({ bookmark }) => {
-      if (activeTag && !bookmark.tags.includes(activeTag)) return false;
+      if (showUntaggedOnly && bookmark.tags.length > 0) return false;
+      if (!showUntaggedOnly && activeTag && !bookmark.tags.includes(activeTag)) return false;
       if (!query) return true;
 
       return [bookmark.name, bookmark.url, bookmark.desc, ...bookmark.tags]
@@ -443,8 +464,8 @@ function render() {
   elements.emptyState.hidden = visibleBookmarks.length > 0;
 
   if (!visibleBookmarks.length) {
-    if (bookmarks.length && (query || activeTag)) {
-      elements.emptyState.textContent = activeTag && !query
+    if (bookmarks.length && (query || activeTag || showUntaggedOnly)) {
+      elements.emptyState.textContent = (activeTag || showUntaggedOnly) && !query
         ? t('noTagResults')
         : t('noSearchResults');
     } else {
@@ -501,6 +522,28 @@ function saveBookmark(event) {
     });
   } catch (error) {
     setStatus(localizeError(error), 'error');
+    return;
+  }
+
+  const duplicateIndex = bookmarks.findIndex((item, itemIndex) => {
+    return itemIndex !== index && item.url === bookmark.url;
+  });
+
+  if (duplicateIndex >= 0) {
+    const existing = bookmarks[duplicateIndex];
+
+    if (!window.confirm(t('confirmDuplicateUrl', { name: existing.name }))) return;
+
+    elements.bookmarkIndex.value = String(duplicateIndex);
+    elements.bookmarkDialogTitle.textContent = t('editDialogTitle');
+    elements.name.value = existing.name;
+    elements.url.value = existing.url;
+    elements.description.value = existing.desc;
+    selectedTags = [...existing.tags];
+    elements.tags.value = '';
+    setTagOptionsOpen(false);
+    renderTagPicker();
+    elements.name.focus();
     return;
   }
 
@@ -754,7 +797,7 @@ async function prefillBookmarkFromClipboard(session) {
 async function pullBookmarks() {
   if (isBusy) return;
 
-  const { gistId, gistFilename } = readConfig();
+  const { gistId, gistFilename, token } = readConfig();
 
   if (!gistId) {
     setStatus(t('errorGistIdRequired'), 'error');
@@ -768,7 +811,7 @@ async function pullBookmarks() {
   setStatus(t('statusPulling'));
 
   try {
-    const remote = await GistService.readFile(gistId, gistFilename);
+    const remote = await GistService.readFile(gistId, gistFilename, token);
     const incoming = parseBookmarksCSV(remote.content);
 
     if (revision !== startRevision) {
@@ -780,6 +823,7 @@ async function pullBookmarks() {
     isDirty = false;
     revision += 1;
     activeTag = null;
+    showUntaggedOnly = false;
 
     if (!persistState()) {
       setStatus(t('statusLocalStorageError'), 'error');
@@ -928,16 +972,26 @@ function bindEvents() {
   });
 
   document.addEventListener('pointerdown', (event) => {
-    if (tagOptionsOpen && !elements.tagPicker.contains(event.target)) {
+    if (
+      tagOptionsOpen
+      && !elements.tagPicker.contains(event.target)
+      && !elements.bookmarkActions.contains(event.target)
+    ) {
       setTagOptionsOpen(false);
     }
   });
 
   elements.tagBar.addEventListener('click', (event) => {
-    const button = event.target.closest('button[data-tag]');
+    const button = event.target.closest('button[data-filter-type]');
     if (!button) return;
 
-    activeTag = activeTag === button.dataset.tag ? null : button.dataset.tag;
+    if (button.dataset.filterType === 'untagged') {
+      showUntaggedOnly = !showUntaggedOnly;
+      activeTag = null;
+    } else {
+      showUntaggedOnly = false;
+      activeTag = activeTag === button.dataset.tag ? null : button.dataset.tag;
+    }
     render();
   });
 

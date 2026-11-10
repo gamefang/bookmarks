@@ -80,8 +80,16 @@ export function normalizeBookmark(data = {}) {
 export function createBookmark(data) {
   const bookmark = normalizeBookmark(data);
 
-  if (!bookmark.name) {
-    throw new BookmarkDataError('errorNameRequired');
+  if (
+    bookmark.name.includes(',')
+    || bookmark.url.includes(',')
+    || bookmark.desc.includes(',')
+  ) {
+    throw new BookmarkDataError('errorCsvComma');
+  }
+
+  if (bookmark.tags.some((tag) => tag.includes(',') || tag.includes('|'))) {
+    throw new BookmarkDataError('errorTagCharacters');
   }
 
   let parsedUrl;
