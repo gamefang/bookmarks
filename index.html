@@ -38,7 +38,7 @@
     <nav id="tagBar" class="tag-bar" aria-label="Filter bookmarks by tag" data-i18n-aria-label="tagFilterLabel"></nav>
 
     <section id="bookmarkGrid" class="bookmark-grid" aria-label="Bookmarks" data-i18n-aria-label="bookmarkListLabel"></section>
-    <p id="emptyState" class="empty-state" hidden data-i18n="emptyBookmarks">No bookmarks yet.</p>
+    <p id="emptyState" class="empty-state" hidden data-i18n="emptyBookmarks">No bookmarks yet. Add one to get started.</p>
     <footer id="meta" class="meta"></footer>
   </main>
 
@@ -57,6 +57,32 @@
         data-i18n-placeholder="managerTitlePlaceholder"
         placeholder="Bookmarks"
       >
+
+      <label for="listSortInput" data-i18n="listSortLabel">Bookmark Sorting</label>
+      <select id="listSortInput" name="listSort">
+        <option value="created-desc" data-i18n="sortCreatedDesc">Creation time · Newest first</option>
+        <option value="created-asc" data-i18n="sortCreatedAsc">Creation time · Oldest first</option>
+        <option value="updated-desc" data-i18n="sortUpdatedDesc">Modified time · Newest first</option>
+        <option value="updated-asc" data-i18n="sortUpdatedAsc">Modified time · Oldest first</option>
+        <option value="name-asc" data-i18n="sortNameAsc">Name · A to Z</option>
+        <option value="name-desc" data-i18n="sortNameDesc">Name · Z to A</option>
+        <option value="tag-asc" data-i18n="sortTagAsc">Tag · A to Z</option>
+        <option value="tag-desc" data-i18n="sortTagDesc">Tag · Z to A</option>
+      </select>
+
+      <label for="tagSortInput" data-i18n="tagSortLabel">Tag Sorting</label>
+      <select id="tagSortInput" name="tagSort">
+        <option value="lastUsed-desc" data-i18n="sortTagLastUsedDesc">Last used · Most recent first</option>
+        <option value="lastUsed-asc" data-i18n="sortTagLastUsedAsc">Last used · Least recent first</option>
+        <option value="name-asc" data-i18n="sortTagNameAsc">Name · A to Z</option>
+        <option value="name-desc" data-i18n="sortTagNameDesc">Name · Z to A</option>
+        <option value="count-desc" data-i18n="sortTagCountDesc">Applied count · Most first</option>
+        <option value="count-asc" data-i18n="sortTagCountAsc">Applied count · Least first</option>
+      </select>
+
+      <button id="manageTagsButton" class="button button-secondary" type="button" data-i18n="manageTagsButton">
+        Manage all tags
+      </button>
 
       <label for="gistFilenameInput" data-i18n="gistFilenameLabel">Gist Filename</label>
       <input
@@ -100,6 +126,54 @@
       <div class="dialog-actions">
         <button class="button" type="submit" data-i18n="saveButton">Save</button>
         <button class="button button-danger" id="cancelSettingsButton" type="button" data-i18n="cancelButton">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Manage all tags -->
+  <dialog id="tagManagerDialog" class="dialog">
+    <div class="dialog-form">
+      <h2 data-i18n="tagManagerTitle">Manage all tags</h2>
+      <p class="field-hint" data-i18n="tagManagerHint">
+        Edit a tag to change its name, visibility, or pinned status.
+      </p>
+
+      <div id="tagManagerList" class="tag-manager-list"></div>
+
+      <div class="dialog-actions">
+        <button id="closeTagManagerButton" class="button" type="button" data-i18n="doneButton">Done</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Edit tag -->
+  <dialog id="tagEditDialog" class="dialog">
+    <form id="tagEditForm" class="dialog-form">
+      <h2 data-i18n="editTagTitle">Edit tag</h2>
+
+      <label for="tagEditNameInput" data-i18n="tagNameLabel">Tag name</label>
+      <input
+        id="tagEditNameInput"
+        name="tagName"
+        type="text"
+        maxlength="200"
+        required
+      >
+
+      <label class="check-row" for="tagEditHiddenInput">
+        <input id="tagEditHiddenInput" name="hidden" type="checkbox">
+        <span data-i18n="tagHiddenSetting">Hide this tag</span>
+      </label>
+
+      <label class="check-row" for="tagEditPinnedInput">
+        <input id="tagEditPinnedInput" name="pinned" type="checkbox">
+        <span data-i18n="tagPinnedSetting">Pin this tag</span>
+      </label>
+
+      <div class="dialog-actions">
+        <button class="button" type="submit" data-i18n="saveButton">Save</button>
+        <button id="deleteTagButton" class="button button-danger" type="button" data-i18n="deleteTagButton">Delete tag</button>
+        <button id="cancelTagEditButton" class="button button-secondary" type="button" data-i18n="cancelButton">Cancel</button>
       </div>
     </form>
   </dialog>

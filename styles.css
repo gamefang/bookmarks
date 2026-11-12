@@ -50,7 +50,8 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
@@ -153,6 +154,9 @@ button:disabled {
   background: var(--accent-soft);
   color: var(--accent-text);
   font-size: 12px;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .tag-filter[aria-pressed="true"] {
@@ -303,7 +307,8 @@ button:disabled {
 }
 
 .dialog-form input,
-.dialog-form textarea {
+.dialog-form textarea,
+.dialog-form select {
   width: 100%;
   padding: 9px 12px;
   border: 1px solid var(--border);
@@ -319,6 +324,10 @@ button:disabled {
   resize: vertical;
 }
 
+.dialog-form select {
+  min-height: 38px;
+}
+
 .field-hint {
   margin-bottom: 6px;
   color: var(--muted);
@@ -328,6 +337,7 @@ button:disabled {
 
 .dialog-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
 }
@@ -358,6 +368,10 @@ button:disabled {
 
   .search-input {
     flex-basis: 100%;
+  }
+
+  .dialog-actions .button {
+    flex-basis: calc(50% - 8px);
   }
 }
 
@@ -489,4 +503,103 @@ button:disabled {
   flex: 0 0 auto;
   width: 28px;
   height: 28px;
+}
+
+/* Tag manager */
+.tag-manager-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: min(55vh, 480px);
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.tag-manager-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--page-bg);
+}
+
+.tag-manager-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 9px;
+  border-radius: 12px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.tag-manager-states {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tag-manager-state {
+  padding: 3px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.tag-manager-state-hidden {
+  background: #fce8e6;
+  color: #b3261e;
+}
+
+.tag-manager-state-pinned {
+  background: #e4f3e8;
+  color: #28633b;
+}
+
+.tag-manager-edit {
+  flex: 0 0 auto !important;
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 0;
+}
+
+.dialog-form .check-row input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.dialog-form .check-row span {
+  color: var(--text);
+  font-size: 13px;
+}
+
+#manageTagsButton {
+  width: 100%;
+  margin: 3px 0 7px;
+}
+
+@media (max-width: 420px) {
+  .tag-manager-item {
+    flex-wrap: wrap;
+  }
+
+  .tag-manager-name {
+    flex-basis: calc(100% - 16px);
+  }
+
+  .tag-manager-edit {
+    margin-left: auto;
+  }
 }

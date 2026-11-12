@@ -4,8 +4,10 @@ import { LocalStore, StorageKeys } from './storage.js';
 import { GistService } from './gist.js';
 import {
   createBookmark,
+  createDefaultSyncSettings,
   isSafeWebUrl,
   normalizeBookmark,
+  normalizeSyncSettings,
   parseBookmarksCSV,
   serializeBookmarksCSV
 } from './bookmarks.js';
@@ -21,11 +23,30 @@ const elements = {
   grid: document.querySelector('#bookmarkGrid'),
   emptyState: document.querySelector('#emptyState'),
   meta: document.querySelector('#meta'),
+
   settingsDialog: document.querySelector('#settingsDialog'),
   settingsForm: document.querySelector('#settingsForm'),
+  managerTitle: document.querySelector('#managerTitleInput'),
+  listSort: document.querySelector('#listSortInput'),
+  tagSort: document.querySelector('#tagSortInput'),
+  gistFilename: document.querySelector('#gistFilenameInput'),
   gistId: document.querySelector('#gistIdInput'),
   token: document.querySelector('#tokenInput'),
+  manageTagsButton: document.querySelector('#manageTagsButton'),
   cancelSettingsButton: document.querySelector('#cancelSettingsButton'),
+
+  tagManagerDialog: document.querySelector('#tagManagerDialog'),
+  tagManagerList: document.querySelector('#tagManagerList'),
+  closeTagManagerButton: document.querySelector('#closeTagManagerButton'),
+
+  tagEditDialog: document.querySelector('#tagEditDialog'),
+  tagEditForm: document.querySelector('#tagEditForm'),
+  tagEditName: document.querySelector('#tagEditNameInput'),
+  tagEditHidden: document.querySelector('#tagEditHiddenInput'),
+  tagEditPinned: document.querySelector('#tagEditPinnedInput'),
+  deleteTagButton: document.querySelector('#deleteTagButton'),
+  cancelTagEditButton: document.querySelector('#cancelTagEditButton'),
+
   bookmarkDialog: document.querySelector('#bookmarkDialog'),
   bookmarkDialogTitle: document.querySelector('#bookmarkDialogTitle'),
   bookmarkForm: document.querySelector('#bookmarkForm'),
@@ -39,12 +60,12 @@ const elements = {
   tagOptions: document.querySelector('#tagOptions'),
   cancelBookmarkButton: document.querySelector('#cancelBookmarkButton'),
   bookmarkActions: document.querySelector('#bookmarkForm .dialog-actions'),
-  appTitle: document.querySelector('#appTitle'),
-  managerTitle: document.querySelector('#managerTitleInput'),
-  gistFilename: document.querySelector('#gistFilenameInput'),
+
+  appTitle: document.querySelector('#appTitle')
 };
 
 let bookmarks = [];
+let appSettings = createDefaultSyncSettings(config.app.defaultTitle);
 let selectedTags = [];
 let isDirty = false;
 let isBusy = false;
@@ -55,15 +76,12 @@ let baselineFingerprint = null;
 let tagOptionsOpen = false;
 let activeTagOption = -1;
 let bookmarkDialogSession = 0;
-let tagUsage = Object.create(null);
+let editingTag = null;
+let tagLongPressTimer = null;
+let tagLongPressHandled = false;
 
 function readConfig() {
   return {
-    managerTitle: LocalStore.getString(
-      StorageKeys.APP_TITLE,
-      config.app.defaultTitle
-    ).trim() || config.app.defaultTitle,
-
     gistFilename: LocalStore.getString(
       StorageKeys.GIST_FILENAME,
       config.app.gistFilename
@@ -75,14 +93,12 @@ function readConfig() {
 }
 
 function applyManagerTitle() {
-  const { managerTitle } = readConfig();
+  const title = appSettings.managerTitle || config.app.defaultTitle;
 
-  elements.appTitle.textContent = managerTitle;
-  document.title = managerTitle;
+  elements.appTitle.textContent = title;
+  document.title = title;
 }
 
-// A compact two-part fingerprint avoids storing a second full copy of the bookmark data.
-// It is calculated only when data changes or synchronization completes, never during rendering.
 function fingerprintText(text) {
   let hashA = 0x811c9dc5;
   let hashB = 0x9e3779b9;
@@ -97,16 +113,17 @@ function fingerprintText(text) {
 }
 
 function getBookmarksFingerprint() {
-  return fingerprintText(serializeBookmarksCSV(bookmarks));
+  return fingerprintText(serializeBookmarksCSV(bookmarks, appSettings));
 }
 
 function persistState() {
-  const savedBookmarks = LocalStore.set(StorageKeys.BOOKMARKS, bookmarks);
-  const savedDirty = LocalStore.set(StorageKeys.DIRTY, isDirty);
-  const savedBaseline = baselineFingerprint === null
-    || LocalStore.set(StorageKeys.SYNCED_FINGERPRINT, baselineFingerprint);
-
-  return savedBookmarks && savedDirty && savedBaseline;
+  return [
+    LocalStore.set(StorageKeys.BOOKMARKS, bookmarks),
+    LocalStore.set(StorageKeys.APP_SETTINGS, appSettings),
+    LocalStore.set(StorageKeys.DIRTY, isDirty),
+    baselineFingerprint === null
+      || LocalStore.set(StorageKeys.SYNCED_FINGERPRINT, baselineFingerprint)
+  ].every(Boolean);
 }
 
 function setStatus(message, type = '') {
@@ -128,69 +145,139 @@ function markChanged(message = t('statusSavedLocal')) {
   if (!persistState()) {
     setStatus(t('statusLocalStorageError'), 'error');
   } else {
-    setStatus(isDirty ? message : t('statusChangesReverted'), isDirty ? '' : 'success');
+    setStatus(
+      isDirty ? message : t('statusChangesReverted'),
+      isDirty ? '' : 'success'
+    );
   }
 
   render();
 }
 
-function loadTagUsage() {
-  const saved = LocalStore.get(StorageKeys.TAG_USAGE, {});
-  tagUsage = Object.create(null);
-
-  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return;
-
-  Object.entries(saved).forEach(([tag, count]) => {
-    if (tag && Number.isSafeInteger(count) && count > 0) {
-      tagUsage[tag] = count;
-    }
-  });
+function getAllTagNames() {
+  return [...new Set(bookmarks.flatMap((bookmark) => bookmark.tags))];
 }
 
-function recordTagUsage(tags) {
-  const uniqueTags = [...new Set(tags)];
-  if (!uniqueTags.length) return true;
+function getTagCountMap() {
+  const counts = Object.create(null);
 
-  uniqueTags.forEach((tag) => {
-    tagUsage[tag] = (tagUsage[tag] ?? 0) + 1;
-  });
-
-  return LocalStore.set(StorageKeys.TAG_USAGE, tagUsage);
-}
-
-function getAllTags() {
-  return [...new Set(bookmarks.flatMap((bookmark) => bookmark.tags))]
-    .sort((a, b) => {
-      const usageDifference = (tagUsage[b] ?? 0) - (tagUsage[a] ?? 0);
-      return usageDifference || a.localeCompare(b, getLocale());
+  bookmarks.forEach((bookmark) => {
+    new Set(bookmark.tags).forEach((tag) => {
+      counts[tag] = (counts[tag] ?? 0) + 1;
     });
+  });
+
+  return counts;
+}
+
+function getTimestampValue(value) {
+  if (!value) return 0;
+
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function sortTagNames(tags) {
+  const counts = getTagCountMap();
+  const pinned = new Set(appSettings.pinnedTags);
+  const sort = appSettings.tagSort;
+  const descending = sort.endsWith('-desc');
+  const type = sort.replace(/-(asc|desc)$/, '');
+
+  return [...tags].sort((a, b) => {
+    const pinDifference = Number(pinned.has(b)) - Number(pinned.has(a));
+    if (pinDifference) return pinDifference;
+
+    let comparison = 0;
+
+    if (type === 'name') {
+      comparison = a.localeCompare(b, getLocale());
+    } else if (type === 'count') {
+      comparison = (counts[a] ?? 0) - (counts[b] ?? 0);
+    } else {
+      comparison = getTimestampValue(appSettings.tagLastUsed[a])
+        - getTimestampValue(appSettings.tagLastUsed[b]);
+    }
+
+    if (descending) comparison *= -1;
+    return comparison || a.localeCompare(b, getLocale());
+  });
+}
+
+function getVisibleTags() {
+  const hidden = new Set(appSettings.hiddenTags);
+
+  return sortTagNames(
+    getAllTagNames().filter((tag) => !hidden.has(tag))
+  );
+}
+
+function sortBookmarks(items) {
+  const sort = appSettings.listSort;
+  const descending = sort.endsWith('-desc');
+  const type = sort.replace(/-(asc|desc)$/, '');
+
+  return [...items].sort((a, b) => {
+    const { bookmark: first, index: firstIndex } = a;
+    const { bookmark: second, index: secondIndex } = b;
+    let comparison = 0;
+
+    if (type === 'name') {
+      comparison = first.name.localeCompare(second.name, getLocale());
+    } else if (type === 'tag') {
+      const firstTags = [...first.tags].sort().join('|');
+      const secondTags = [...second.tags].sort().join('|');
+      comparison = firstTags.localeCompare(secondTags, getLocale());
+    } else {
+      const firstTimes = appSettings.bookmarkTimes[first.url] ?? {};
+      const secondTimes = appSettings.bookmarkTimes[second.url] ?? {};
+      const key = type === 'created' ? 'createdAt' : 'updatedAt';
+
+      comparison = getTimestampValue(firstTimes[key])
+        - getTimestampValue(secondTimes[key]);
+    }
+
+    if (descending) comparison *= -1;
+    return comparison || firstIndex - secondIndex;
+  });
 }
 
 function createTagButton(tag) {
   const isUntagged = tag === null;
+  const isPinned = !isUntagged && appSettings.pinnedTags.includes(tag);
   const button = document.createElement('button');
+
   button.type = 'button';
   button.className = `tag-filter${isUntagged ? ' tag-filter-untagged' : ''}`;
   button.textContent = isUntagged ? t('untaggedFilter') : tag;
   button.dataset.filterType = isUntagged ? 'untagged' : 'tag';
 
-  if (!isUntagged) button.dataset.tag = tag;
+  if (!isUntagged) {
+    button.dataset.tag = tag;
+    button.style.backgroundColor = isPinned
+      ? config.tagColors.pinned
+      : config.tagColors.normal;
+    button.style.color = isPinned
+      ? config.tagColors.pinnedText
+      : config.tagColors.normalText;
+  } else {
+    button.style.backgroundColor = config.tagColors.untagged;
+    button.style.color = config.tagColors.untaggedText;
+  }
 
-  button.style.backgroundColor = isUntagged
-    ? config.tagColors.untagged
-    : config.tagColors.normal;
-  button.style.color = isUntagged
-    ? config.tagColors.untaggedText
-    : config.tagColors.normalText;
   button.setAttribute('aria-pressed', String(
-    isUntagged ? showUntaggedOnly : !showUntaggedOnly && activeTag === tag
+    isUntagged
+      ? showUntaggedOnly
+      : !showUntaggedOnly && activeTag === tag
   ));
+
   return button;
 }
 
 function createActionButton(action, index, name) {
   const button = document.createElement('button');
   const isEdit = action === 'edit';
+
   button.type = 'button';
   button.className = 'icon-button';
   button.dataset.action = action;
@@ -198,6 +285,7 @@ function createActionButton(action, index, name) {
   button.textContent = isEdit ? '✏️' : '🗑';
   button.title = t(isEdit ? 'editAction' : 'deleteAction', { name });
   button.setAttribute('aria-label', button.title);
+
   return button;
 }
 
@@ -226,6 +314,7 @@ function createBookmarkCard(bookmark, index) {
   } else {
     heading.textContent = bookmark.name;
   }
+
   card.append(heading);
 
   const urlText = document.createElement('p');
@@ -240,14 +329,27 @@ function createBookmarkCard(bookmark, index) {
     card.append(description);
   }
 
-  if (bookmark.tags.length) {
+  const visibleTags = bookmark.tags.filter(
+    (tag) => !appSettings.hiddenTags.includes(tag)
+  );
+
+  if (visibleTags.length) {
     const tagList = document.createElement('div');
     tagList.className = 'bookmark-tags';
 
-    bookmark.tags.forEach((tag) => {
+    visibleTags.forEach((tag) => {
+      const isPinned = appSettings.pinnedTags.includes(tag);
       const tagElement = document.createElement('span');
-      tagElement.className = 'bookmark-tag';
+
+      tagElement.className = `bookmark-tag${isPinned ? ' bookmark-tag-pinned' : ''}`;
       tagElement.textContent = tag;
+      tagElement.style.backgroundColor = isPinned
+        ? config.tagColors.pinned
+        : config.tagColors.normal;
+      tagElement.style.color = isPinned
+        ? config.tagColors.pinnedText
+        : config.tagColors.normalText;
+
       tagList.append(tagElement);
     });
 
@@ -293,25 +395,35 @@ function renderTagPicker() {
 
   const query = elements.tags.value.trim();
   const normalizedQuery = query.toLocaleLowerCase(getLocale());
-  const selectedSet = new Set(selectedTags.map((tag) => tag.toLocaleLowerCase(getLocale())));
-  const allTags = getAllTags();
-  const exactMatch = allTags.find((tag) => tag.toLocaleLowerCase(getLocale()) === normalizedQuery);
+  const selectedSet = new Set(
+    selectedTags.map((tag) => tag.toLocaleLowerCase(getLocale()))
+  );
+  const allNames = getAllTagNames();
+  const allNameSet = new Set(
+    allNames.map((tag) => tag.toLocaleLowerCase(getLocale()))
+  );
+  const visibleTags = getVisibleTags();
+  const exactMatch = visibleTags.find(
+    (tag) => tag.toLocaleLowerCase(getLocale()) === normalizedQuery
+  );
   const options = [];
 
   if (
     query
     && !query.includes(',')
     && !query.includes('|')
-    && !exactMatch
+    && !allNameSet.has(normalizedQuery)
     && !selectedSet.has(normalizedQuery)
   ) {
     options.push({ tag: query, isNew: true });
   }
 
-  allTags.forEach((tag) => {
+  visibleTags.forEach((tag) => {
     const normalizedTag = tag.toLocaleLowerCase(getLocale());
+
     if (selectedSet.has(normalizedTag)) return;
     if (normalizedQuery && !normalizedTag.includes(normalizedQuery)) return;
+
     options.push({ tag, isNew: false });
   });
 
@@ -325,16 +437,21 @@ function renderTagPicker() {
     return;
   }
 
-  // Append only enough candidates to fill the configured number of visual rows.
   const rowTops = [];
 
   for (const { tag, isNew } of options) {
     const option = document.createElement('button');
+
     option.type = 'button';
     option.className = `tag-option${isNew ? ' tag-option-create' : ''}`;
     option.setAttribute('role', 'option');
     option.dataset.tagOption = tag;
     option.textContent = isNew ? t('tagsCreateOption', { tag }) : tag;
+
+    if (!isNew && appSettings.pinnedTags.includes(tag)) {
+      option.style.backgroundColor = config.tagColors.pinned;
+      option.style.color = config.tagColors.pinnedText;
+    }
     elements.tagOptions.append(option);
 
     const top = Math.round(option.getBoundingClientRect().top);
@@ -364,8 +481,6 @@ function renderTagPicker() {
     elements.tags.setAttribute('aria-activedescendant', `tag-option-${activeTagOption}`);
   }
 
-  // The options are part of normal document flow, so the dialog grows to fit
-  // them. Scroll the dialog itself to keep the options and Save/Cancel visible.
   scrollBookmarkDialogToBottom();
 }
 
@@ -402,8 +517,18 @@ function addSelectedTag(value) {
   }
 
   const normalizedTag = tag.toLocaleLowerCase(getLocale());
-  const existing = getAllTags().find((item) => item.toLocaleLowerCase(getLocale()) === normalizedTag);
-  const selected = selectedTags.some((item) => item.toLocaleLowerCase(getLocale()) === normalizedTag);
+  const existing = getAllTagNames().find(
+    (item) => item.toLocaleLowerCase(getLocale()) === normalizedTag
+  );
+
+  if (existing && appSettings.hiddenTags.includes(existing)) {
+    setStatus(t('errorTagHidden'), 'error');
+    return;
+  }
+
+  const selected = selectedTags.some(
+    (item) => item.toLocaleLowerCase(getLocale()) === normalizedTag
+  );
 
   if (!selected) selectedTags.push(existing ?? tag);
 
@@ -416,10 +541,7 @@ function addSelectedTag(value) {
 
 function commitTagInput() {
   const value = elements.tags.value.trim();
-  if (!value) return;
-
-  const existing = getAllTags().find((tag) => tag === value);
-  addSelectedTag(existing ?? value);
+  if (value) addSelectedTag(value);
 }
 
 function removeSelectedTag(index) {
@@ -432,30 +554,53 @@ function removeSelectedTag(index) {
 
 function render() {
   const query = elements.search.value.trim().toLocaleLowerCase(getLocale());
-  const allTags = getAllTags();
+  const visibleTags = getVisibleTags();
 
-  if (activeTag && !allTags.includes(activeTag)) activeTag = null;
+  if (activeTag && !visibleTags.includes(activeTag)) activeTag = null;
 
-  const hasUntaggedBookmarks = bookmarks.some((bookmark) => bookmark.tags.length === 0);
+  const hasUntaggedBookmarks = bookmarks.some(
+    (bookmark) => bookmark.tags.length === 0
+  );
 
   if (!hasUntaggedBookmarks) showUntaggedOnly = false;
 
   elements.tagBar.replaceChildren(
     ...(hasUntaggedBookmarks ? [createTagButton(null)] : []),
-    ...allTags.map(createTagButton)
+    ...visibleTags.map(createTagButton)
   );
+
   elements.grid.replaceChildren();
 
-  const visibleBookmarks = bookmarks
-    .map((bookmark, index) => ({ bookmark, index }))
-    .filter(({ bookmark }) => {
-      if (showUntaggedOnly && bookmark.tags.length > 0) return false;
-      if (!showUntaggedOnly && activeTag && !bookmark.tags.includes(activeTag)) return false;
-      if (!query) return true;
+  const visibleBookmarks = sortBookmarks(
+    bookmarks
+      .map((bookmark, index) => ({ bookmark, index }))
+      .filter(({ bookmark }) => {
+        if (showUntaggedOnly && bookmark.tags.length > 0) return false;
 
-      return [bookmark.name, bookmark.url, bookmark.desc, ...bookmark.tags]
-        .some((value) => value.toLocaleLowerCase(getLocale()).includes(query));
-    });
+        if (
+          !showUntaggedOnly
+          && activeTag
+          && !bookmark.tags.includes(activeTag)
+        ) {
+          return false;
+        }
+
+        if (!query) return true;
+
+        const searchableTags = bookmark.tags.filter(
+          (tag) => !appSettings.hiddenTags.includes(tag)
+        );
+
+        return [
+          bookmark.name,
+          bookmark.url,
+          bookmark.desc,
+          ...searchableTags
+        ].some(
+          (value) => value.toLocaleLowerCase(getLocale()).includes(query)
+        );
+      })
+  );
 
   visibleBookmarks.forEach(({ bookmark, index }) => {
     elements.grid.append(createBookmarkCard(bookmark, index));
@@ -474,6 +619,7 @@ function render() {
   }
 
   const state = isDirty ? t('syncStateDirty') : t('syncStateClean');
+
   elements.meta.textContent = t('metaSummary', {
     count: bookmarks.length,
     state
@@ -486,7 +632,9 @@ function openBookmarkDialog(index = -1) {
 
   elements.bookmarkForm.reset();
   elements.bookmarkIndex.value = String(index);
-  elements.bookmarkDialogTitle.textContent = t(index >= 0 ? 'editDialogTitle' : 'addDialogTitle');
+  elements.bookmarkDialogTitle.textContent = t(
+    index >= 0 ? 'editDialogTitle' : 'addDialogTitle'
+  );
   elements.name.value = bookmark?.name ?? '';
   elements.url.value = bookmark?.url ?? '';
   elements.description.value = bookmark?.desc ?? '';
@@ -507,10 +655,41 @@ function closeBookmarkDialog() {
   elements.bookmarkDialog.close();
 }
 
+function touchBookmark(bookmark, previous = null, now = new Date().toISOString()) {
+  const previousTimes = previous
+    ? appSettings.bookmarkTimes[previous.url]
+    : null;
+
+  if (previous && previous.url !== bookmark.url) {
+    delete appSettings.bookmarkTimes[previous.url];
+  }
+
+  appSettings.bookmarkTimes[bookmark.url] = {
+    createdAt: previousTimes?.createdAt ?? now,
+    updatedAt: now
+  };
+}
+
+function pruneTagSettings() {
+  const usedTags = new Set(getAllTagNames());
+
+  appSettings.hiddenTags = appSettings.hiddenTags.filter(
+    (tag) => usedTags.has(tag)
+  );
+  appSettings.pinnedTags = appSettings.pinnedTags.filter(
+    (tag) => usedTags.has(tag)
+  );
+
+  Object.keys(appSettings.tagLastUsed).forEach((tag) => {
+    if (!usedTags.has(tag)) delete appSettings.tagLastUsed[tag];
+  });
+}
+
 function saveBookmark(event) {
   event.preventDefault();
 
   const index = Number.parseInt(elements.bookmarkIndex.value, 10);
+  const previous = index >= 0 ? bookmarks[index] : null;
   let bookmark;
 
   try {
@@ -532,7 +711,9 @@ function saveBookmark(event) {
   if (duplicateIndex >= 0) {
     const existing = bookmarks[duplicateIndex];
 
-    if (!window.confirm(t('confirmDuplicateUrl', { name: existing.name }))) return;
+    if (!window.confirm(t('confirmDuplicateUrl', { name: existing.name }))) {
+      return;
+    }
 
     elements.bookmarkIndex.value = String(duplicateIndex);
     elements.bookmarkDialogTitle.textContent = t('editDialogTitle');
@@ -547,35 +728,253 @@ function saveBookmark(event) {
     return;
   }
 
+  const now = new Date().toISOString();
+  const previousTags = new Set(previous?.tags ?? []);
+
+  touchBookmark(bookmark, previous, now);
+
+  bookmark.tags.forEach((tag) => {
+    if (!previousTags.has(tag)) {
+      appSettings.tagLastUsed[tag] = now;
+    }
+  });
+
   if (index >= 0) {
     bookmarks[index] = bookmark;
   } else {
     bookmarks.unshift(bookmark);
   }
 
-  const usageSaved = recordTagUsage(bookmark.tags);
-
+  pruneTagSettings();
   closeBookmarkDialog();
   markChanged();
-
-  if (!usageSaved) {
-    setStatus(t('statusTagUsageError'), 'error');
-  }
 }
 
 function deleteBookmark(index) {
   const bookmark = bookmarks[index];
   if (!bookmark) return;
+
   if (!window.confirm(t('confirmDelete', { name: bookmark.name }))) return;
 
   bookmarks.splice(index, 1);
+  delete appSettings.bookmarkTimes[bookmark.url];
+  pruneTagSettings();
+
   markChanged(t('statusDeletedLocal'));
+}
+
+function renderTagManager() {
+  elements.tagManagerList.replaceChildren();
+
+  const tags = sortTagNames(getAllTagNames());
+
+  if (!tags.length) {
+    const empty = document.createElement('p');
+    empty.className = 'field-hint';
+    empty.textContent = t('tagManagerEmpty');
+    elements.tagManagerList.append(empty);
+    return;
+  }
+
+  tags.forEach((tag) => {
+    const hidden = appSettings.hiddenTags.includes(tag);
+    const pinned = appSettings.pinnedTags.includes(tag);
+
+    const item = document.createElement('div');
+    item.className = 'tag-manager-item';
+
+    const label = document.createElement('span');
+    label.className = 'tag-manager-name';
+    label.textContent = tag;
+    label.style.backgroundColor = hidden
+      ? config.tagColors.hidden
+      : pinned
+        ? config.tagColors.pinned
+        : config.tagColors.normal;
+    label.style.color = hidden
+      ? config.tagColors.hiddenText
+      : pinned
+        ? config.tagColors.pinnedText
+        : config.tagColors.normalText;
+    item.append(label);
+
+    const states = document.createElement('span');
+    states.className = 'tag-manager-states';
+
+    if (hidden) {
+      const hiddenLabel = document.createElement('span');
+      hiddenLabel.className = 'tag-manager-state tag-manager-state-hidden';
+      hiddenLabel.textContent = t('tagHiddenLabel');
+      states.append(hiddenLabel);
+    }
+
+    if (pinned) {
+      const pinnedLabel = document.createElement('span');
+      pinnedLabel.className = 'tag-manager-state tag-manager-state-pinned';
+      pinnedLabel.textContent = t('tagPinnedLabel');
+      states.append(pinnedLabel);
+    }
+
+    item.append(states);
+
+    const editButton = document.createElement('button');
+    editButton.type = 'button';
+    editButton.className = 'button button-secondary tag-manager-edit';
+    editButton.textContent = t('editTagButton');
+    editButton.dataset.editTag = tag;
+    item.append(editButton);
+
+    elements.tagManagerList.append(item);
+  });
+}
+
+function openTagManager() {
+  renderTagManager();
+  elements.tagManagerDialog.showModal();
+}
+
+function openTagEditor(tag) {
+  if (!getAllTagNames().includes(tag)) return;
+
+  editingTag = tag;
+  elements.tagEditName.value = tag;
+  elements.tagEditHidden.checked = appSettings.hiddenTags.includes(tag);
+  elements.tagEditPinned.checked = appSettings.pinnedTags.includes(tag);
+  elements.deleteTagButton.hidden = false;
+
+  elements.tagEditDialog.showModal();
+  elements.tagEditName.focus();
+  elements.tagEditName.select();
+}
+
+function setTagMembership(list, tag, enabled) {
+  return enabled
+    ? [...new Set([...list, tag])]
+    : list.filter((item) => item !== tag);
+}
+
+function saveTagEdit(event) {
+  event.preventDefault();
+
+  if (!editingTag) return;
+
+  const oldTag = editingTag;
+  const newTag = elements.tagEditName.value.trim();
+
+  if (!newTag) {
+    setStatus(t('errorTagNameRequired'), 'error');
+    elements.tagEditName.focus();
+    return;
+  }
+
+  if (newTag.includes(',') || newTag.includes('|')) {
+    setStatus(t('errorTagCharacters'), 'error');
+    elements.tagEditName.focus();
+    return;
+  }
+
+  const duplicate = getAllTagNames().find((tag) => {
+    return tag !== oldTag
+      && tag.toLocaleLowerCase(getLocale()) === newTag.toLocaleLowerCase(getLocale());
+  });
+
+  if (duplicate) {
+    setStatus(t('errorDuplicateTag'), 'error');
+    elements.tagEditName.focus();
+    return;
+  }
+
+  const hidden = elements.tagEditHidden.checked;
+  const pinned = elements.tagEditPinned.checked;
+  const renamed = oldTag !== newTag;
+  const now = new Date().toISOString();
+
+  if (renamed) {
+    bookmarks.forEach((bookmark) => {
+      if (!bookmark.tags.includes(oldTag)) return;
+
+      bookmark.tags = bookmark.tags.map(
+        (tag) => tag === oldTag ? newTag : tag
+      );
+      touchBookmark(bookmark, bookmark, now);
+    });
+
+    appSettings.hiddenTags = appSettings.hiddenTags.map(
+      (tag) => tag === oldTag ? newTag : tag
+    );
+    appSettings.pinnedTags = appSettings.pinnedTags.map(
+      (tag) => tag === oldTag ? newTag : tag
+    );
+
+    if (Object.hasOwn(appSettings.tagLastUsed, oldTag)) {
+      appSettings.tagLastUsed[newTag] = appSettings.tagLastUsed[oldTag];
+      delete appSettings.tagLastUsed[oldTag];
+    }
+
+    if (activeTag === oldTag) activeTag = newTag;
+  }
+
+  appSettings.hiddenTags = setTagMembership(
+    appSettings.hiddenTags,
+    newTag,
+    hidden
+  );
+  appSettings.pinnedTags = setTagMembership(
+    appSettings.pinnedTags,
+    newTag,
+    pinned
+  );
+
+  if (hidden && activeTag === newTag) activeTag = null;
+
+  editingTag = null;
+  elements.tagEditDialog.close();
+  pruneTagSettings();
+  markChanged();
+
+  if (elements.tagManagerDialog.open) renderTagManager();
+}
+
+function deleteTag() {
+  if (!editingTag) return;
+
+  const tag = editingTag;
+
+  if (!window.confirm(t('confirmDeleteTag', { tag }))) return;
+
+  const now = new Date().toISOString();
+
+  bookmarks.forEach((bookmark) => {
+    if (!bookmark.tags.includes(tag)) return;
+
+    bookmark.tags = bookmark.tags.filter((item) => item !== tag);
+    touchBookmark(bookmark, bookmark, now);
+  });
+
+  appSettings.hiddenTags = appSettings.hiddenTags.filter(
+    (item) => item !== tag
+  );
+  appSettings.pinnedTags = appSettings.pinnedTags.filter(
+    (item) => item !== tag
+  );
+  delete appSettings.tagLastUsed[tag];
+
+  if (activeTag === tag) activeTag = null;
+
+  editingTag = null;
+  elements.tagEditDialog.close();
+  pruneTagSettings();
+  markChanged();
+
+  if (elements.tagManagerDialog.open) renderTagManager();
 }
 
 function openSettings() {
   const settings = readConfig();
 
-  elements.managerTitle.value = settings.managerTitle;
+  elements.managerTitle.value = appSettings.managerTitle;
+  elements.listSort.value = appSettings.listSort;
+  elements.tagSort.value = appSettings.tagSort;
   elements.gistFilename.value = settings.gistFilename;
   elements.gistId.value = settings.gistId;
   elements.token.value = settings.token;
@@ -611,19 +1010,27 @@ function saveSettings(event) {
     return;
   }
 
-  const previousSettings = readConfig();
+  const previousConfig = readConfig();
 
-  // Warn before changing the remote target when local changes are pending.
   if (
     isDirty
-    && gistFilename !== previousSettings.gistFilename
+    && gistFilename !== previousConfig.gistFilename
     && !window.confirm(t('confirmFilenameChangeWithDirty'))
   ) {
     return;
   }
 
+  const previousSettings = JSON.stringify(appSettings);
+
+  appSettings = normalizeSyncSettings({
+    ...appSettings,
+    managerTitle,
+    listSort: elements.listSort.value,
+    tagSort: elements.tagSort.value
+  }, config.app.defaultTitle);
+
   const saved = [
-    LocalStore.set(StorageKeys.APP_TITLE, managerTitle),
+    LocalStore.set(StorageKeys.APP_SETTINGS, appSettings),
     LocalStore.set(StorageKeys.GIST_FILENAME, gistFilename),
     LocalStore.set(StorageKeys.GIST_ID, gistId),
     LocalStore.set(StorageKeys.GITHUB_TOKEN, token)
@@ -636,7 +1043,13 @@ function saveSettings(event) {
 
   applyManagerTitle();
   elements.settingsDialog.close();
-  setStatus(t('statusSettingsSaved'));
+
+  if (JSON.stringify(appSettings) !== previousSettings) {
+    markChanged();
+  } else {
+    render();
+    setStatus(t('statusSettingsSaved'), 'success');
+  }
 }
 
 function localizeError(error) {
@@ -655,7 +1068,9 @@ function formatDate(value) {
   if (!value) return t('dateUnknown');
 
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? t('dateUnknown') : date.toLocaleString(getLocale());
+  return Number.isNaN(date.getTime())
+    ? t('dateUnknown')
+    : date.toLocaleString(getLocale());
 }
 
 function normalizeClipboardUrl(value) {
@@ -695,11 +1110,17 @@ async function readHtmlHead(response) {
         break;
       }
 
-      const chunk = value.subarray(0, config.metadata.maxHtmlBytes - bytesRead);
+      const chunk = value.subarray(
+        0,
+        config.metadata.maxHtmlBytes - bytesRead
+      );
+
       bytesRead += chunk.byteLength;
       html += decoder.decode(chunk, { stream: true });
 
-      if (/<\/head\s*>/i.test(html) || chunk.byteLength < value.byteLength) break;
+      if (/<\/head\s*>/i.test(html) || chunk.byteLength < value.byteLength) {
+        break;
+      }
     }
   } finally {
     await reader.cancel().catch(() => {});
@@ -710,7 +1131,10 @@ async function readHtmlHead(response) {
 
 async function fetchPageMetadata(url) {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), config.metadata.requestTimeoutMs);
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    config.metadata.requestTimeoutMs
+  );
 
   try {
     const response = await fetch(url, {
@@ -724,11 +1148,16 @@ async function fetchPageMetadata(url) {
     if (!response.ok) return null;
 
     const contentType = response.headers.get('content-type') ?? '';
-    if (contentType && !contentType.toLowerCase().includes('text/html')) return null;
+
+    if (contentType && !contentType.toLowerCase().includes('text/html')) {
+      return null;
+    }
 
     const html = await readHtmlHead(response);
     const page = new DOMParser().parseFromString(html, 'text/html');
-    const readMeta = (selector) => page.querySelector(selector)?.getAttribute('content')?.trim() ?? '';
+    const readMeta = (selector) => {
+      return page.querySelector(selector)?.getAttribute('content')?.trim() ?? '';
+    };
 
     const title = readMeta('meta[property="og:title"]')
       || readMeta('meta[name="twitter:title"]')
@@ -746,7 +1175,6 @@ async function fetchPageMetadata(url) {
       description: cleanText(description)
     };
   } catch {
-    // Most sites do not allow cross-origin HTML reads. Clipboard URL filling still works.
     return null;
   } finally {
     window.clearTimeout(timeout);
@@ -766,7 +1194,10 @@ async function prefillBookmarkFromClipboard(session) {
 
   const url = normalizeClipboardUrl(clipboardText);
 
-  if (!url || session !== bookmarkDialogSession || !elements.bookmarkDialog.open) return;
+  if (!url || session !== bookmarkDialogSession || !elements.bookmarkDialog.open) {
+    return;
+  }
+
   if (elements.url.value.trim()) return;
 
   elements.url.value = url;
@@ -777,17 +1208,30 @@ async function prefillBookmarkFromClipboard(session) {
   setStatus(t('statusClipboardUrl'));
 
   const metadata = await fetchPageMetadata(url);
-  if (!metadata || session !== bookmarkDialogSession || !elements.bookmarkDialog.open) return;
+
+  if (!metadata || session !== bookmarkDialogSession || !elements.bookmarkDialog.open) {
+    return;
+  }
 
   let filled = false;
 
   if (canFillName && !elements.name.value.trim() && metadata.title) {
-    elements.name.value = metadata.title.slice(0, Number(elements.name.maxLength));
+    elements.name.value = metadata.title.slice(
+      0,
+      Number(elements.name.maxLength)
+    );
     filled = true;
   }
 
-  if (canFillDescription && !elements.description.value.trim() && metadata.description) {
-    elements.description.value = metadata.description.slice(0, Number(elements.description.maxLength));
+  if (
+    canFillDescription
+    && !elements.description.value.trim()
+    && metadata.description
+  ) {
+    elements.description.value = metadata.description.slice(
+      0,
+      Number(elements.description.maxLength)
+    );
     filled = true;
   }
 
@@ -807,23 +1251,34 @@ async function pullBookmarks() {
   if (isDirty && !window.confirm(t('confirmPullOverwrite'))) return;
 
   const startRevision = revision;
+
   setBusy(true);
   setStatus(t('statusPulling'));
 
   try {
-    const remote = await GistService.readFile(gistId, gistFilename, token);
+    const remote = await GistService.readFile(
+      gistId,
+      gistFilename,
+      token
+    );
+
     const incoming = parseBookmarksCSV(remote.content);
 
     if (revision !== startRevision) {
       throw new Error(t('errorLocalChangedDuringPull'));
     }
 
-    bookmarks = incoming;
-    baselineFingerprint = fingerprintText(serializeBookmarksCSV(incoming));
+    bookmarks = incoming.bookmarks;
+    appSettings = incoming.settings;
+    baselineFingerprint = fingerprintText(
+      serializeBookmarksCSV(bookmarks, appSettings)
+    );
     isDirty = false;
     revision += 1;
     activeTag = null;
     showUntaggedOnly = false;
+
+    applyManagerTitle();
 
     if (!persistState()) {
       setStatus(t('statusLocalStorageError'), 'error');
@@ -836,7 +1291,10 @@ async function pullBookmarks() {
 
     render();
   } catch (error) {
-    setStatus(t('statusPullFailed', { error: localizeError(error) }), 'error');
+    setStatus(
+      t('statusPullFailed', { error: localizeError(error) }),
+      'error'
+    );
   } finally {
     setBusy(false);
   }
@@ -852,16 +1310,20 @@ async function pushBookmarks() {
     return;
   }
 
-  const content = serializeBookmarksCSV(bookmarks);
+  const content = serializeBookmarksCSV(bookmarks, appSettings);
   const pushedFingerprint = fingerprintText(content);
 
   setBusy(true);
   setStatus(t('statusPushing'));
 
   try {
-    await GistService.writeFile(gistId, token, gistFilename, content);
+    await GistService.writeFile(
+      gistId,
+      token,
+      gistFilename,
+      content
+    );
 
-    // The uploaded content becomes the new baseline, even if local edits happened during the request.
     baselineFingerprint = pushedFingerprint;
     isDirty = getBookmarksFingerprint() !== baselineFingerprint;
 
@@ -875,35 +1337,57 @@ async function pushBookmarks() {
 
     render();
   } catch (error) {
-    setStatus(t('statusPushFailed', { error: localizeError(error) }), 'error');
+    setStatus(
+      t('statusPushFailed', { error: localizeError(error) }),
+      'error'
+    );
   } finally {
     setBusy(false);
   }
 }
 
 function loadBookmarks() {
-  const saved = LocalStore.get(StorageKeys.BOOKMARKS, []);
+  const savedBookmarks = LocalStore.get(StorageKeys.BOOKMARKS, []);
+  const savedSettings = LocalStore.get(StorageKeys.APP_SETTINGS, null);
 
-  bookmarks = Array.isArray(saved)
-    ? saved.map((item) => normalizeBookmark(item ?? {})).filter((bookmark) => bookmark.name && bookmark.url)
+  bookmarks = Array.isArray(savedBookmarks)
+    ? savedBookmarks
+      .map((item) => normalizeBookmark(item ?? {}))
+      .filter((bookmark) => bookmark.name && bookmark.url)
     : [];
+
+  appSettings = normalizeSyncSettings(
+    savedSettings ?? {},
+    config.app.defaultTitle
+  );
 
   isDirty = Boolean(LocalStore.get(StorageKeys.DIRTY, false));
 
-  const savedFingerprint = LocalStore.getString(StorageKeys.SYNCED_FINGERPRINT, null);
+  const savedFingerprint = LocalStore.getString(
+    StorageKeys.SYNCED_FINGERPRINT,
+    null
+  );
 
-  if (savedFingerprint !== null) {
+  if (!savedSettings && bookmarks.length > 0) {
+    // The old local data has no synchronized settings or timestamp metadata.
+    // Do not guess or silently convert it.
+    isDirty = true;
+    baselineFingerprint = null;
+  } else if (savedFingerprint !== null) {
     baselineFingerprint = savedFingerprint;
     isDirty = getBookmarksFingerprint() !== baselineFingerprint;
-    LocalStore.set(StorageKeys.DIRTY, isDirty);
   } else if (!isDirty) {
-    // On first run after this update, the current clean local data is the comparison baseline.
     baselineFingerprint = getBookmarksFingerprint();
-    LocalStore.set(StorageKeys.SYNCED_FINGERPRINT, baselineFingerprint);
+  } else {
+    baselineFingerprint = null;
   }
 
-  // Legacy installations already marked dirty have no known baseline; keep that warning
-  // until the user performs a successful pull or push rather than guessing that data is clean.
+  persistState();
+}
+
+function clearUnusedStorage() {
+  LocalStore.remove('bm_title');
+  LocalStore.remove('bm_tag_usage');
 }
 
 function bindEvents() {
@@ -915,8 +1399,42 @@ function bindEvents() {
 
   elements.settingsForm.addEventListener('submit', saveSettings);
   elements.bookmarkForm.addEventListener('submit', saveBookmark);
-  elements.cancelSettingsButton.addEventListener('click', () => elements.settingsDialog.close());
-  elements.cancelBookmarkButton.addEventListener('click', closeBookmarkDialog);
+  elements.tagEditForm.addEventListener('submit', saveTagEdit);
+
+  elements.cancelSettingsButton.addEventListener(
+    'click',
+    () => elements.settingsDialog.close()
+  );
+
+  elements.cancelBookmarkButton.addEventListener(
+    'click',
+    closeBookmarkDialog
+  );
+
+  elements.manageTagsButton.addEventListener('click', () => {
+    elements.settingsDialog.close();
+    openTagManager();
+  });
+
+  elements.closeTagManagerButton.addEventListener(
+    'click',
+    () => elements.tagManagerDialog.close()
+  );
+
+  elements.cancelTagEditButton.addEventListener(
+    'click',
+    () => {
+      editingTag = null;
+      elements.tagEditDialog.close();
+    }
+  );
+
+  elements.deleteTagButton.addEventListener('click', deleteTag);
+
+  elements.tagManagerList.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-edit-tag]');
+    if (button) openTagEditor(button.dataset.editTag);
+  });
 
   elements.bookmarkDialog.addEventListener('close', () => {
     bookmarkDialogSession += 1;
@@ -939,11 +1457,17 @@ function bindEvents() {
       event.preventDefault();
 
       if (activeTagOption >= 0) {
-        elements.tagOptions.querySelectorAll('.tag-option')[activeTagOption]?.click();
+        elements.tagOptions
+          .querySelectorAll('.tag-option')[activeTagOption]
+          ?.click();
       } else {
         commitTagInput();
       }
-    } else if (event.key === 'Backspace' && !elements.tags.value && selectedTags.length) {
+    } else if (
+      event.key === 'Backspace'
+      && !elements.tags.value
+      && selectedTags.length
+    ) {
       selectedTags.pop();
       renderTagPicker();
     } else if (event.key === 'Escape' && !elements.tagOptions.hidden) {
@@ -956,19 +1480,26 @@ function bindEvents() {
   });
 
   elements.tagPicker.addEventListener('click', (event) => {
-    const removeButton = event.target.closest('button[data-remove-tag-index]');
+    const removeButton = event.target.closest(
+      'button[data-remove-tag-index]'
+    );
 
     if (removeButton) {
-      removeSelectedTag(Number.parseInt(removeButton.dataset.removeTagIndex, 10));
+      removeSelectedTag(
+        Number.parseInt(removeButton.dataset.removeTagIndex, 10)
+      );
       return;
     }
 
     const option = event.target.closest('button[data-tag-option]');
+
     if (option) addSelectedTag(option.dataset.tagOption);
   });
 
   elements.tagOptions.addEventListener('mousedown', (event) => {
-    if (event.target.closest('button[data-tag-option]')) event.preventDefault();
+    if (event.target.closest('button[data-tag-option]')) {
+      event.preventDefault();
+    }
   });
 
   document.addEventListener('pointerdown', (event) => {
@@ -981,17 +1512,51 @@ function bindEvents() {
     }
   });
 
+  elements.tagBar.addEventListener('pointerdown', (event) => {
+    const button = event.target.closest('button[data-filter-type="tag"]');
+    if (!button || event.button === 2) return;
+
+    window.clearTimeout(tagLongPressTimer);
+    tagLongPressHandled = false;
+
+    tagLongPressTimer = window.setTimeout(() => {
+      tagLongPressHandled = true;
+      openTagEditor(button.dataset.tag);
+    }, 550);
+  });
+
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach((eventName) => {
+    elements.tagBar.addEventListener(eventName, () => {
+      window.clearTimeout(tagLongPressTimer);
+      tagLongPressTimer = null;
+    });
+  });
+
+  elements.tagBar.addEventListener('contextmenu', (event) => {
+    if (event.target.closest('button[data-filter-type="tag"]')) {
+      event.preventDefault();
+    }
+  });
+
   elements.tagBar.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-filter-type]');
     if (!button) return;
+
+    if (tagLongPressHandled) {
+      tagLongPressHandled = false;
+      return;
+    }
 
     if (button.dataset.filterType === 'untagged') {
       showUntaggedOnly = !showUntaggedOnly;
       activeTag = null;
     } else {
       showUntaggedOnly = false;
-      activeTag = activeTag === button.dataset.tag ? null : button.dataset.tag;
+      activeTag = activeTag === button.dataset.tag
+        ? null
+        : button.dataset.tag;
     }
+
     render();
   });
 
@@ -1008,12 +1573,14 @@ function bindEvents() {
 }
 
 function init() {
-  setLocale(LocalStore.getString(StorageKeys.LOCALE, config.i18n.defaultLocale));
-
-  applyManagerTitle();
+  clearUnusedStorage();
+  setLocale(LocalStore.getString(
+    StorageKeys.LOCALE,
+    config.i18n.defaultLocale
+  ));
 
   loadBookmarks();
-  loadTagUsage();
+  applyManagerTitle();
   bindEvents();
   render();
 
